@@ -8,7 +8,7 @@ pub mod service;
 pub use backend::{AuthUserRecord, Credentials, MopAuthBackend};
 pub use middleware::csrf_protection_middleware;
 pub use password::{hash_password, verify_password};
-pub use rate_limit::IpRateLimiter;
+pub use rate_limit::{IpRateLimiter, KeyRateLimiter};
 pub use rbac::{RequireAdmin, RequireAuth, RequireOperator};
 pub use service::AuthService;
 

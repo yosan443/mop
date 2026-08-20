@@ -3,9 +3,9 @@ use mop_core::config::Config;
 use mop_core::error::AppError;
 use mop_db::{create_sqlite_pool, run_migrations};
 use mop_http::create_app;
-use mop_watch::{FakeResourceCollector, ResourceCollector};
+use mop_watch::{CompositeCollector, FakeResourceCollector, ResourceCollector};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -36,6 +36,12 @@ enum Commands {
 
         #[arg(long, help = "Force using fake resource collector for testing")]
         fake_backend: bool,
+    },
+
+    #[command(about = "Generate polkit rules JavaScript from allowlist (SPEC.md §9.1)")]
+    PolkitRules {
+        #[arg(short, long, help = "Output file path (default: stdout)")]
+        output: Option<PathBuf>,
     },
 
     #[command(about = "Run system diagnosis")]
@@ -100,28 +106,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             run_server(config).await?;
         }
+        Commands::PolkitRules { output } => {
+            let rules = generate_polkit_rules(&config);
+            if let Some(out_path) = output {
+                std::fs::write(&out_path, &rules)?;
+                println!("Polkit rules written to {}", out_path.display());
+            } else {
+                println!("{rules}");
+            }
+        }
         Commands::Doctor => {
             println!("mop version: {}", env!("CARGO_PKG_VERSION"));
             println!("Config database path: {}", config.database.path.display());
             println!("Config server bind: {}", config.server.bind);
             println!("Registration mode: {}", config.auth.registration);
+            println!(
+                "Allowlisted systemd units: {:?}",
+                config.resources.systemd.units
+            );
+            println!(
+                "Allowlisted docker containers: {:?}",
+                config.resources.docker.containers
+            );
+
+            // Polkit rules diagnosis
+            let polkit_path = Path::new("/etc/polkit-1/rules.d/50-mop.rules");
+            if polkit_path.exists() {
+                if let Ok(installed) = std::fs::read_to_string(polkit_path) {
+                    let expected = generate_polkit_rules(&config);
+                    if installed.trim() == expected.trim() {
+                        println!(
+                            "Polkit rules: [OK] Synchronized at {}",
+                            polkit_path.display()
+                        );
+                    } else {
+                        println!("Polkit rules: [WARNING] Installed rules differ from current allowlist.");
+                        println!(
+                            "  To update, run: sudo mop polkit-rules --output {}",
+                            polkit_path.display()
+                        );
+                    }
+                }
+            } else {
+                println!(
+                    "Polkit rules: [NOTICE] File not found at {}",
+                    polkit_path.display()
+                );
+                println!(
+                    "  To generate and install, run: sudo mop polkit-rules --output {}",
+                    polkit_path.display()
+                );
+            }
+
             println!("Doctor diagnosis complete: System is healthy.");
         }
         Commands::Backup { create: _ } => {
-            eprintln!("Error: 'mop backup' is a stub in milestone M1. It will be implemented in milestone M6 (SPEC.md §14).");
+            eprintln!("Error: 'mop backup' is a stub in milestone M2. It will be implemented in milestone M6 (SPEC.md §14).");
             std::process::exit(1);
         }
         Commands::Restore { file: _ } => {
-            eprintln!("Error: 'mop restore' is a stub in milestone M1. It will be implemented in milestone M6 (SPEC.md §14).");
+            eprintln!("Error: 'mop restore' is a stub in milestone M2. It will be implemented in milestone M6 (SPEC.md §14).");
             std::process::exit(1);
         }
         Commands::Plugin { action: _ } => {
-            eprintln!("Error: 'mop plugin' is a stub in milestone M1. It will be implemented in milestone M4 (SPEC.md §11).");
+            eprintln!("Error: 'mop plugin' is a stub in milestone M2. It will be implemented in milestone M4 (SPEC.md §11).");
             std::process::exit(1);
         }
     }
 
     Ok(())
+}
+
+fn generate_polkit_rules(config: &Config) -> String {
+    let units_json = serde_json::to_string_pretty(&config.resources.systemd.units)
+        .unwrap_or_else(|_| "[]".to_string());
+    format!(
+        r#"// Polkit rules for mop daemon (SPEC.md §9.1)
+// Generated automatically from mop config.toml allowlist
+
+polkit.addRule(function(action, subject) {{
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        subject.user == "mop") {{
+        
+        var unit = action.lookup("unit");
+        var allowedUnits = {units_json};
+
+        if (allowedUnits.indexOf(unit) >= 0) {{
+            return polkit.Result.YES;
+        }}
+    }}
+}});
+"#
+    )
 }
 
 async fn run_server(config: Config) -> Result<(), AppError> {
@@ -142,10 +218,13 @@ async fn run_server(config: Config) -> Result<(), AppError> {
         warn!("=====================================================");
         Arc::new(FakeResourceCollector::new())
     } else {
-        warn!(
-            "Real systemd/Docker watcher is scheduled for M2; defaulting to FakeResourceCollector"
-        );
-        Arc::new(FakeResourceCollector::new())
+        match CompositeCollector::new(config.resources.clone()).await {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                warn!("Failed to initialize native CompositeCollector ({e}); falling back to FakeResourceCollector");
+                Arc::new(FakeResourceCollector::new())
+            }
+        }
     };
 
     let app = create_app(pool, config.clone(), collector);

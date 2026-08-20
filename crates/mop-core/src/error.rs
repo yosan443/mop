@@ -18,6 +18,7 @@ pub enum ErrorCode {
     InvalidPassword,
     ResourceNotFound,
     ActionNotAllowed,
+    ResourceLocked,
     RateLimitExceeded,
     CsrfOriginMismatch,
     DatabaseError,
@@ -69,6 +70,9 @@ pub enum AppError {
     #[error("Action '{0}' is not allowed on resource '{1}'")]
     ActionNotAllowed(String, String),
 
+    #[error("Resource '{0}' is locked: another action is currently in progress")]
+    ResourceLocked(String),
+
     #[error("Rate limit exceeded: please try again later")]
     RateLimitExceeded,
 
@@ -105,6 +109,7 @@ impl AppError {
             AppError::InvalidPassword(_) => ErrorCode::InvalidPassword,
             AppError::ResourceNotFound(_) => ErrorCode::ResourceNotFound,
             AppError::ActionNotAllowed(_, _) => ErrorCode::ActionNotAllowed,
+            AppError::ResourceLocked(_) => ErrorCode::ResourceLocked,
             AppError::RateLimitExceeded => ErrorCode::RateLimitExceeded,
             AppError::CsrfOriginMismatch => ErrorCode::CsrfOriginMismatch,
             AppError::Database(_) => ErrorCode::DatabaseError,
