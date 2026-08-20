@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import DashboardView from '../views/DashboardView.vue';
+import ResourceDetailView from '../views/ResourceDetailView.vue';
 import LoginView from '../views/LoginView.vue';
 import SetupView from '../views/SetupView.vue';
 import RegisterView from '../views/RegisterView.vue';
@@ -11,6 +12,12 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'dashboard',
     component: DashboardView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/resources/:id',
+    name: 'resource-detail',
+    component: ResourceDetailView,
     meta: { requiresAuth: true },
   },
   {

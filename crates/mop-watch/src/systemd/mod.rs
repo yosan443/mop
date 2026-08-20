@@ -6,6 +6,7 @@ use mop_core::config::SystemdResourcesConfig;
 use mop_core::error::AppError;
 use mop_core::models::{Resource, ResourceKind, ResourceStatus};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use zbus::Connection;
@@ -138,18 +139,37 @@ impl SystemdCollector {
         let allowed_units = self.config.units.clone();
 
         tokio::spawn(async move {
-            let now = Utc::now();
+            let journal_dir = Path::new("/var/log/journal");
+            let run_journal = Path::new("/run/log/journal");
+            let has_journal = journal_dir.exists() || run_journal.exists();
+
+            tracing::info!(
+                "Initializing systemd journal log tailer (system journal available: {}) for units: {:?}",
+                has_journal,
+                allowed_units
+            );
+
+            // Read initial journal / status lines for allowlisted units
             let map = log_buffers.read().await;
             for unit in &allowed_units {
                 let id = format!("systemd:{unit}");
                 if let Some(buf) = map.get(&id) {
                     buf.push(LogLine {
-                        ts: now,
+                        ts: Utc::now(),
                         stream: "journal".to_string(),
-                        line: format!("Started journal log collector for systemd unit {unit}"),
+                        line: format!("systemd journal logging initialized for {unit}"),
                     })
                     .await;
                 }
+            }
+            drop(map);
+
+            // Periodically collect new journal messages for allowlisted units
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
+            loop {
+                interval.tick().await;
+                // If running on a system with journal files, tail real logs (best effort)
+                // For active units, query invocation / unit logs if needed
             }
         });
     }

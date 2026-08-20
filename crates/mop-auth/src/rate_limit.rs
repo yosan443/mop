@@ -43,7 +43,13 @@ impl IpRateLimiter {
         Ok(())
     }
 
-    pub async fn reset(&self) {
+    /// Reset counter for a specific IP (e.g. upon successful authentication)
+    pub async fn reset_ip(&self, ip: IpAddr) {
+        let mut map = self.state.lock().await;
+        map.remove(&ip);
+    }
+
+    pub async fn reset_all(&self) {
         let mut map = self.state.lock().await;
         map.clear();
     }
@@ -87,7 +93,12 @@ impl<K: Hash + Eq + Send + Clone + 'static> KeyRateLimiter<K> {
         Ok(())
     }
 
-    pub async fn reset(&self) {
+    pub async fn reset_key(&self, key: &K) {
+        let mut map = self.state.lock().await;
+        map.remove(key);
+    }
+
+    pub async fn reset_all(&self) {
         let mut map = self.state.lock().await;
         map.clear();
     }

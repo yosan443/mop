@@ -198,7 +198,7 @@ pub async fn login(
     let _ = AuditLogger::log(&state.pool, audit_params).await;
 
     // Reset rate limiter for this IP on successful login
-    state.auth_limiter.reset().await;
+    state.auth_limiter.reset_ip(client_ip).await;
 
     let full_user = UserRepo::find_by_id(&state.pool, &user_record.0.id)
         .await
