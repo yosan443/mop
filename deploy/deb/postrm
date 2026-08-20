@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Remove state and runtime directory on purge if requested
+        # Keep config unless purged
+        rm -rf /run/mop || true
+        # We do not automatically delete /var/lib/mop/mop.db to prevent accidental data loss
+    ;;
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+    ;;
+esac
+
+exit 0

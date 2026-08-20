@@ -1,0 +1,34 @@
+[Unit]
+Description=mop (master-of-process) Daemon
+After=network.target systemd-journald.service docker.service
+Wants=systemd-journald.service
+
+[Service]
+Type=simple
+User=mop
+Group=mop
+ExecStart=/usr/bin/mop serve --config /etc/mop/config.toml
+Restart=always
+RestartSec=5s
+
+# State and Runtime Directories
+StateDirectory=mop
+RuntimeDirectory=mop
+RuntimeDirectoryMode=0755
+
+# Hardening Directives (SPEC.md §5)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+
+# Journal access
+SupplementaryGroups=systemd-journal
+
+[Install]
+WantedBy=multi-user.target
