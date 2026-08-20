@@ -12,16 +12,20 @@ use mop_auth::{
 use mop_core::config::Config;
 use mop_core::error::{AppError, ErrorResponse};
 use mop_core::models::{AuditResult, UserResponse};
-use mop_jobs::{AuditLogger, AuditParams};
+use mop_jobs::{AuditLogger, AuditParams, JobService};
+use mop_watch::ResourceCollector;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Config,
     pub auth_limiter: IpRateLimiter,
+    pub collector: Arc<dyn ResourceCollector>,
+    pub job_service: JobService,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,6 +6,7 @@ use axum::{
 use axum_login::AuthManagerLayerBuilder;
 use mop_auth::{csrf_protection_middleware, IpRateLimiter, MopAuthBackend};
 use mop_core::config::Config;
+use mop_jobs::JobService;
 use mop_watch::ResourceCollector;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -18,7 +19,13 @@ use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::handlers::{
     auth::{get_auth_meta, get_me, login, logout, register, AppState},
+    events::stream_events,
     health::health_check,
+    jobs::{get_job, list_jobs, stream_jobs},
+    resources::{
+        execute_resource_action, get_resource_detail, get_resource_logs, list_resources,
+        stream_resource_logs,
+    },
     users::{create_user, list_users, update_user},
 };
 use crate::static_files::static_handler;
@@ -26,7 +33,7 @@ use crate::static_files::static_handler;
 pub fn create_app(
     pool: SqlitePool,
     config: Config,
-    _collector: Arc<dyn ResourceCollector>,
+    collector: Arc<dyn ResourceCollector>,
 ) -> Router {
     let session_store = SqliteStore::new(pool.clone());
     let session_expiry_hours = config.auth.session_hours as i64;
@@ -47,10 +54,14 @@ pub fn create_app(
     let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
     let auth_limiter = IpRateLimiter::new_auth_limiter();
+    let job_service = JobService::new(pool.clone());
+
     let app_state = AppState {
         pool,
         config,
         auth_limiter,
+        collector,
+        job_service,
     };
 
     let api_router = Router::new()
@@ -62,7 +73,19 @@ pub fn create_app(
         .route("/auth/me", get(get_me))
         // Users API (Admin)
         .route("/users", get(list_users).post(create_user))
-        .route("/users/{id}", patch(update_user));
+        .route("/users/{id}", patch(update_user))
+        // Resources API (Viewer+ / Operator+)
+        .route("/resources", get(list_resources))
+        .route("/resources/{id}", get(get_resource_detail))
+        .route("/resources/{id}/logs", get(get_resource_logs))
+        .route("/resources/{id}/logs/stream", get(stream_resource_logs))
+        .route("/resources/{id}/actions", post(execute_resource_action))
+        // Jobs API (Viewer+)
+        .route("/jobs", get(list_jobs))
+        .route("/jobs/{id}", get(get_job))
+        .route("/jobs/stream", get(stream_jobs))
+        // Events SSE (Viewer+)
+        .route("/events/stream", get(stream_events));
 
     Router::new()
         .nest("/api/v1", api_router)
