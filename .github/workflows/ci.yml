@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feat/* ]
   pull_request:
     branches: [ main ]
 
@@ -24,22 +24,19 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Node & pnpm for web build
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          cache-dependency-path: 'web/pnpm-lock.yaml'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
 
       - name: Build Web Frontend (required for rust-embed)
         run: |
           cd web
-          pnpm install --frozen-lockfile || pnpm install
+          pnpm approve-builds --all || true
+          pnpm install
           pnpm build
 
       - name: Check Formatting
@@ -57,15 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm
 
       - name: Install Web Dependencies
         run: |
@@ -95,15 +90,13 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm
 
       - name: Build Web Frontend
         run: |
