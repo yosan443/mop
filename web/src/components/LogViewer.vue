@@ -11,13 +11,17 @@ const props = defineProps<{
   resourceId: string;
 }>();
 
+// Ring buffer capacity: SPEC.md §11 (max 5000 lines in memory)
+// DOM rendering is optimized with windowing over the filtered items.
 const logs = ref<LogLine[]>([]);
 const autoScroll = ref(true);
 const levelFilter = ref<'ALL' | 'INFO' | 'WARN' | 'ERROR'>('ALL');
 const searchQuery = ref('');
 const logContainer = ref<HTMLElement | null>(null);
 const isConnected = ref(false);
+const maxRenderedLines = ref(1000); // Windowing rendering limit for ultra-smooth scrolling
 let eventSource: EventSource | null = null;
+let lastLogTimestamp: string | null = null;
 
 const filteredLogs = computed(() => {
   return logs.value.filter(item => {
@@ -39,13 +43,27 @@ const filteredLogs = computed(() => {
   });
 });
 
+// Windowed logs for DOM rendering: render up to maxRenderedLines to prevent DOM bloat
+const displayedLogs = computed(() => {
+  const filtered = filteredLogs.value;
+  if (filtered.length <= maxRenderedLines.value) {
+    return filtered;
+  }
+  // Return the most recent slice
+  return filtered.slice(filtered.length - maxRenderedLines.value);
+});
+
 async function fetchInitialLogs() {
   try {
     const res = await fetch(`/api/v1/resources/${encodeURIComponent(props.resourceId)}/logs?tail=500`, {
       credentials: 'include',
     });
     if (res.ok) {
-      logs.value = await res.json();
+      const initial: LogLine[] = await res.json();
+      logs.value = initial;
+      if (initial.length > 0) {
+        lastLogTimestamp = initial[initial.length - 1].ts;
+      }
       scrollToBottom();
     }
   } catch (err) {
@@ -58,7 +76,11 @@ function connectLogStream() {
     eventSource.close();
   }
 
-  const url = `/api/v1/resources/${encodeURIComponent(props.resourceId)}/logs/stream`;
+  let url = `/api/v1/resources/${encodeURIComponent(props.resourceId)}/logs/stream`;
+  // If reconnecting, pass since timestamp to prevent gap in logs
+  if (lastLogTimestamp) {
+    url += `?since=${encodeURIComponent(lastLogTimestamp)}`;
+  }
   eventSource = new EventSource(url);
 
   eventSource.onopen = () => {
@@ -69,6 +91,8 @@ function connectLogStream() {
     try {
       const logLine: LogLine = JSON.parse(e.data);
       logs.value.push(logLine);
+      lastLogTimestamp = logLine.ts;
+      // Enforce max 5000 lines client memory limit matching server ring buffer
       if (logs.value.length > 5000) {
         logs.value.shift();
       }
@@ -129,6 +153,7 @@ onUnmounted(() => {
 
 watch(() => props.resourceId, () => {
   logs.value = [];
+  lastLogTimestamp = null;
   fetchInitialLogs();
   connectLogStream();
 });
@@ -208,17 +233,14 @@ watch(() => props.resourceId, () => {
         ログがありません (またはフィルタに一致しません)
       </div>
       <div
-        v-for="(item, idx) in filteredLogs"
+        v-for="(item, idx) in displayedLogs"
         :key="idx"
         class="log-row"
-        :class="{
-          'row-warn': item.line.includes('[WARN]') || item.line.includes('WARN'),
-          'row-error': item.line.includes('[ERROR]') || item.line.includes('ERROR')
-        }"
+        :class="`stream-${item.stream}`"
       >
         <span class="log-ts">{{ item.ts.substring(11, 19) }}</span>
-        <span class="log-stream" :class="item.stream">{{ item.stream }}</span>
-        <span class="log-line">{{ item.line }}</span>
+        <span class="log-stream">[{{ item.stream }}]</span>
+        <span class="log-text">{{ item.line }}</span>
       </div>
     </div>
   </div>
@@ -228,50 +250,57 @@ watch(() => props.resourceId, () => {
 .log-viewer-card {
   display: flex;
   flex-direction: column;
-  height: 600px;
-  background: #0f141c;
+  height: 520px;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 .log-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
-  background: #161d28;
-  border-bottom: 1px solid #232c3d;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-hover);
+  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-3);
   flex-wrap: wrap;
-  gap: 0.75rem;
 }
 
 .toolbar-left {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-3);
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .connection-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 6px;
   font-size: 0.75rem;
   font-weight: 700;
-  padding: 0.2rem 0.5rem;
-  border-radius: 9999px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
   letter-spacing: 0.05em;
 }
 
 .connection-badge.connected {
   background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  color: var(--color-success);
 }
 
 .connection-badge.disconnected {
   background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .dot {
@@ -281,116 +310,88 @@ watch(() => props.resourceId, () => {
   background: currentColor;
 }
 
+.connection-badge.connected .dot {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .log-count {
   font-size: 0.8rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .ring-buffer-notice {
   font-size: 0.75rem;
-  color: #64748b;
-}
-
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  color: var(--color-warning);
+  background: rgba(245, 158, 11, 0.1);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
 }
 
 .search-input {
-  width: 160px;
-  height: 32px;
-  font-size: 0.8rem;
-  background: #0f141c;
-  border-color: #2a3649;
-  color: #f1f5f9;
+  width: 180px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
 }
 
 .level-select {
-  height: 32px;
-  font-size: 0.8rem;
-  background: #0f141c;
-  border-color: #2a3649;
-  color: #f1f5f9;
-}
-
-.btn-sm {
-  padding: 0.35rem 0.65rem;
-  font-size: 0.8rem;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  width: 130px;
 }
 
 .terminal-container {
   flex: 1;
-  padding: 0.75rem 1rem;
-  overflow-y: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', Courier, monospace;
-  font-size: 0.85rem;
+  background: #090d16;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
   line-height: 1.5;
-  color: #cbd5e1;
-  background: #090d14;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .empty-logs {
   color: #64748b;
   text-align: center;
-  padding: 3rem 0;
+  padding: var(--space-8);
   font-style: italic;
 }
 
 .log-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.log-row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  gap: var(--space-2);
+  margin-bottom: 2px;
 }
 
 .log-ts {
   color: #64748b;
-  font-size: 0.75rem;
   flex-shrink: 0;
   user-select: none;
 }
 
 .log-stream {
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0 0.3rem;
-  border-radius: 2px;
+  color: #38bdf8;
   flex-shrink: 0;
-  text-transform: uppercase;
+  user-select: none;
 }
 
-.log-stream.stdout {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-}
-
-.log-stream.stderr {
-  background: rgba(239, 68, 68, 0.15);
+.stream-stderr .log-stream,
+.stream-stderr .log-text {
   color: #f87171;
 }
 
-.log-stream.journal {
-  background: rgba(168, 85, 247, 0.15);
-  color: #c084fc;
+.stream-journal .log-stream {
+  color: #a78bfa;
 }
 
-.log-line {
+.log-text {
   flex: 1;
-}
-
-.row-warn .log-line {
-  color: #fbbf24;
-}
-
-.row-error .log-line {
-  color: #f87171;
-  font-weight: 600;
 }
 </style>

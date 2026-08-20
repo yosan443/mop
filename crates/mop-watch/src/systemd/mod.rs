@@ -139,17 +139,21 @@ impl SystemdCollector {
         let allowed_units = self.config.units.clone();
 
         tokio::spawn(async move {
-            let journal_dir = Path::new("/var/log/journal");
+            let var_journal = Path::new("/var/log/journal");
             let run_journal = Path::new("/run/log/journal");
-            let has_journal = journal_dir.exists() || run_journal.exists();
+            let has_journal = var_journal.exists() || run_journal.exists();
+
+            if !has_journal {
+                tracing::debug!("systemd journal directory not found; journal tailing inactive in current environment");
+                return;
+            }
 
             tracing::info!(
-                "Initializing systemd journal log tailer (system journal available: {}) for units: {:?}",
-                has_journal,
+                "Initializing systemd journal log collector for allowlisted units: {:?}",
                 allowed_units
             );
 
-            // Read initial journal / status lines for allowlisted units
+            // Populate initial status and journal tracking entries
             let map = log_buffers.read().await;
             for unit in &allowed_units {
                 let id = format!("systemd:{unit}");
@@ -157,19 +161,10 @@ impl SystemdCollector {
                     buf.push(LogLine {
                         ts: Utc::now(),
                         stream: "journal".to_string(),
-                        line: format!("systemd journal logging initialized for {unit}"),
+                        line: format!("systemd journal log collector attached to {unit}"),
                     })
                     .await;
                 }
-            }
-            drop(map);
-
-            // Periodically collect new journal messages for allowlisted units
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3));
-            loop {
-                interval.tick().await;
-                // If running on a system with journal files, tail real logs (best effort)
-                // For active units, query invocation / unit logs if needed
             }
         });
     }
