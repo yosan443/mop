@@ -13,6 +13,7 @@ pub struct AuthMetaResponse {
     pub needs_setup: bool,
     pub registration: RegistrationMode,
     pub min_password_len: usize,
+    pub is_fake_backend: bool,
 }
 
 pub struct AuthService;
@@ -29,6 +30,7 @@ impl AuthService {
             needs_setup,
             registration: config.auth.registration,
             min_password_len: config.auth.min_password_len,
+            is_fake_backend: config.resources.fake,
         })
     }
 

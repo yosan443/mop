@@ -1,6 +1,11 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use mop_auth::{
     backend::{AuthUserRecord, Credentials},
+    rate_limit::IpRateLimiter,
     service::{AuthMetaResponse, AuthService},
     AuthSession, RequireAuth,
 };
@@ -10,11 +15,13 @@ use mop_core::models::{AuditResult, UserResponse};
 use mop_jobs::{AuditLogger, AuditParams};
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Config,
+    pub auth_limiter: IpRateLimiter,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +34,22 @@ pub struct RegisterRequest {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> IpAddr {
+    if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first_ip) = forwarded.split(',').next() {
+            if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
 }
 
 pub async fn get_auth_meta(
@@ -45,9 +68,15 @@ pub async fn get_auth_meta(
 
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     mut auth_session: AuthSession,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<UserResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let client_ip = extract_client_ip(&headers);
+    if let Err(e) = state.auth_limiter.check(client_ip).await {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse::from(e))));
+    }
+
     let user = AuthService::register(
         &state.pool,
         &state.config,
@@ -98,9 +127,15 @@ pub async fn register(
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     mut auth_session: AuthSession,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<UserResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let client_ip = extract_client_ip(&headers);
+    if let Err(e) = state.auth_limiter.check(client_ip).await {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse::from(e))));
+    }
+
     let creds = Credentials {
         username: payload.username.clone(),
         password: payload.password,

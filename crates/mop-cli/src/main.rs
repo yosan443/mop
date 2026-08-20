@@ -41,19 +41,19 @@ enum Commands {
     #[command(about = "Run system diagnosis")]
     Doctor,
 
-    #[command(about = "Create or list backups")]
+    #[command(about = "Create or list backups (M6)")]
     Backup {
         #[arg(long, help = "Create a new backup")]
         create: bool,
     },
 
-    #[command(about = "Restore database and config from backup file")]
+    #[command(about = "Restore database and config from backup file (M6)")]
     Restore {
         #[arg(help = "Path to backup archive")]
         file: PathBuf,
     },
 
-    #[command(about = "Manage mop plugins")]
+    #[command(about = "Manage mop plugins (M4)")]
     Plugin {
         #[command(subcommand)]
         action: Option<PluginCommands>,
@@ -108,13 +108,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Doctor diagnosis complete: System is healthy.");
         }
         Commands::Backup { create: _ } => {
-            println!("Backup command is scheduled for milestone M6.");
+            eprintln!("Error: 'mop backup' is a stub in milestone M1. It will be implemented in milestone M6 (SPEC.md §14).");
+            std::process::exit(1);
         }
         Commands::Restore { file: _ } => {
-            println!("Restore command is scheduled for milestone M6.");
+            eprintln!("Error: 'mop restore' is a stub in milestone M1. It will be implemented in milestone M6 (SPEC.md §14).");
+            std::process::exit(1);
         }
         Commands::Plugin { action: _ } => {
-            println!("Plugin management is scheduled for milestone M4.");
+            eprintln!("Error: 'mop plugin' is a stub in milestone M1. It will be implemented in milestone M4 (SPEC.md §11).");
+            std::process::exit(1);
         }
     }
 
@@ -132,7 +135,11 @@ async fn run_server(config: Config) -> Result<(), AppError> {
     run_migrations(&pool).await?;
 
     let collector: Arc<dyn ResourceCollector> = if config.resources.fake {
-        info!("Using FakeResourceCollector (mock backend)");
+        warn!("=====================================================");
+        warn!("*** RUNNING WITH FAKE BACKEND (MOCK MODE ENABLED) ***");
+        warn!("*** D-Bus / Docker interactions are mocked        ***");
+        warn!("*** NOT FOR PRODUCTION USE                        ***");
+        warn!("=====================================================");
         Arc::new(FakeResourceCollector::new())
     } else {
         warn!(

@@ -11,6 +11,7 @@ const currentTheme = ref<'dark' | 'light'>('dark');
 
 const user = computed(() => authStore.user);
 const isAdmin = computed(() => authStore.user?.role === 'admin');
+const isFakeBackend = computed(() => !!authStore.meta?.is_fake_backend);
 
 onMounted(async () => {
   try {
@@ -86,6 +87,16 @@ async function handleLogout() {
     <!-- Main Content -->
     <main class="main-content">
       <div class="content-container">
+        <!-- FAKE BACKEND Warning Banner -->
+        <div v-if="isFakeBackend" class="alert alert-warning fake-banner" id="fake-backend-banner">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <span><strong>FAKE BACKEND 有効:</strong> 現在モックバックエンドで動作しています (テスト用 / 本番環境非推奨)。</span>
+        </div>
+
         <div class="page-header">
           <div>
             <h1 class="page-title">システム概要</h1>
@@ -166,6 +177,14 @@ async function handleLogout() {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.fake-banner {
+  margin-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
 }
 
 .navbar {

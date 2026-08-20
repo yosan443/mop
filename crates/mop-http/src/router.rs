@@ -4,7 +4,7 @@ use axum::{
     Router,
 };
 use axum_login::AuthManagerLayerBuilder;
-use mop_auth::{csrf_protection_middleware, MopAuthBackend};
+use mop_auth::{csrf_protection_middleware, IpRateLimiter, MopAuthBackend};
 use mop_core::config::Config;
 use mop_watch::ResourceCollector;
 use sqlx::SqlitePool;
@@ -46,7 +46,12 @@ pub fn create_app(
     let auth_backend = MopAuthBackend::new(pool.clone());
     let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
-    let app_state = AppState { pool, config };
+    let auth_limiter = IpRateLimiter::new_auth_limiter();
+    let app_state = AppState {
+        pool,
+        config,
+        auth_limiter,
+    };
 
     let api_router = Router::new()
         // Auth API

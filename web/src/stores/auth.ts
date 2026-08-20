@@ -16,6 +16,7 @@ export interface AuthMeta {
   needs_setup: boolean;
   registration: 'first_user' | 'open' | 'closed';
   min_password_len: number;
+  is_fake_backend?: boolean;
 }
 
 export const useAuthStore = defineStore('auth', () => {
