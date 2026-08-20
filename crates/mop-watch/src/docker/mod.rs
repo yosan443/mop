@@ -1,11 +1,12 @@
 use crate::ring_buffer::ResourceLogBuffer;
-use crate::traits::{ResourceDetail, ResourceEvent};
+use crate::traits::{LogLine, ResourceDetail, ResourceEvent};
 use bollard::container::{
-    ListContainersOptions, RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+    ListContainersOptions, LogsOptions, RestartContainerOptions, StartContainerOptions,
+    StopContainerOptions,
 };
 use bollard::system::EventsOptions;
 use bollard::Docker;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use mop_core::config::DockerResourcesConfig;
 use mop_core::error::AppError;
@@ -44,6 +45,9 @@ impl DockerCollector {
         // Start background event listener for Docker container lifecycle events
         collector.start_docker_event_listener();
 
+        // Start background log collectors for managed containers
+        collector.start_container_log_tailers();
+
         Ok(collector)
     }
 
@@ -81,6 +85,51 @@ impl DockerCollector {
                         message: Some(format!("Docker event: {action}")),
                     });
                 }
+            }
+        });
+    }
+
+    fn start_container_log_tailers(&self) {
+        let Some(docker) = self.docker.clone() else {
+            return;
+        };
+        let log_buffers = self.log_buffers.clone();
+        let containers = self.config.containers.clone();
+
+        tokio::spawn(async move {
+            for container in containers {
+                let id = format!("docker:{container}");
+                let mut map = log_buffers.write().await;
+                let buf = map
+                    .entry(id.clone())
+                    .or_insert_with(|| ResourceLogBuffer::new(5000, 65536))
+                    .clone();
+                drop(map);
+
+                let d = docker.clone();
+                let c_name = container.clone();
+                tokio::spawn(async move {
+                    let options = LogsOptions::<String> {
+                        follow: true,
+                        stdout: true,
+                        stderr: true,
+                        tail: "500".to_string(),
+                        ..Default::default()
+                    };
+
+                    let mut stream = d.logs(&c_name, Some(options));
+                    while let Some(log_item) = stream.next().await {
+                        if let Ok(output) = log_item {
+                            let line_str = output.to_string();
+                            buf.push(LogLine {
+                                ts: Utc::now(),
+                                stream: "stdout".to_string(),
+                                line: line_str.trim_end().to_string(),
+                            })
+                            .await;
+                        }
+                    }
+                });
             }
         });
     }
@@ -265,10 +314,28 @@ impl DockerCollector {
         Ok(())
     }
 
-    pub async fn get_log_buffer(&self, id: &str) -> ResourceLogBuffer {
+    pub async fn get_logs(
+        &self,
+        id: &str,
+        tail: usize,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<LogLine>, AppError> {
         let mut map = self.log_buffers.write().await;
-        map.entry(id.to_string())
-            .or_insert_with(|| ResourceLogBuffer::new(5000, 65536))
-            .clone()
+        let buf = map
+            .entry(id.to_string())
+            .or_insert_with(|| ResourceLogBuffer::new(5000, 65536));
+        Ok(buf.get_snapshot(tail, since).await)
+    }
+
+    pub async fn subscribe_logs(
+        &self,
+        id: &str,
+        _since: Option<DateTime<Utc>>,
+    ) -> Result<broadcast::Receiver<LogLine>, AppError> {
+        let mut map = self.log_buffers.write().await;
+        let buf = map
+            .entry(id.to_string())
+            .or_insert_with(|| ResourceLogBuffer::new(5000, 65536));
+        Ok(buf.subscribe())
     }
 }

@@ -58,30 +58,26 @@ impl ResourceCollector for CompositeCollector {
         since: Option<DateTime<Utc>>,
     ) -> Result<Vec<LogLine>, AppError> {
         if id.starts_with("systemd:") {
-            if let Some(buf) = self.systemd.get_log_buffer(id) {
-                return Ok(buf.get_snapshot(tail, since).await);
-            }
+            self.systemd.get_logs(id, tail, since).await
         } else if id.starts_with("docker:") {
-            let buf = self.docker.get_log_buffer(id).await;
-            return Ok(buf.get_snapshot(tail, since).await);
+            self.docker.get_logs(id, tail, since).await
+        } else {
+            Err(AppError::ResourceNotFound(id.to_string()))
         }
-        Err(AppError::ResourceNotFound(id.to_string()))
     }
 
     async fn subscribe_logs(
         &self,
         id: &str,
-        _since: Option<DateTime<Utc>>,
+        since: Option<DateTime<Utc>>,
     ) -> Result<broadcast::Receiver<LogLine>, AppError> {
         if id.starts_with("systemd:") {
-            if let Some(buf) = self.systemd.get_log_buffer(id) {
-                return Ok(buf.subscribe());
-            }
+            self.systemd.subscribe_logs(id, since).await
         } else if id.starts_with("docker:") {
-            let buf = self.docker.get_log_buffer(id).await;
-            return Ok(buf.subscribe());
+            self.docker.subscribe_logs(id, since).await
+        } else {
+            Err(AppError::ResourceNotFound(id.to_string()))
         }
-        Err(AppError::ResourceNotFound(id.to_string()))
     }
 
     async fn execute_action(&self, id: &str, action: &str) -> Result<(), AppError> {

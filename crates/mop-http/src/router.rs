@@ -4,12 +4,14 @@ use axum::{
     Router,
 };
 use axum_login::AuthManagerLayerBuilder;
-use mop_auth::{csrf_protection_middleware, IpRateLimiter, MopAuthBackend};
+use mop_auth::{csrf_protection_middleware, IpRateLimiter, KeyRateLimiter, MopAuthBackend};
 use mop_core::config::Config;
 use mop_jobs::JobService;
 use mop_watch::ResourceCollector;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 use tower_sessions::{
     cookie::{time::Duration, SameSite},
@@ -54,12 +56,16 @@ pub fn create_app(
     let auth_layer = AuthManagerLayerBuilder::new(auth_backend, session_layer).build();
 
     let auth_limiter = IpRateLimiter::new_auth_limiter();
+    let action_limiter = KeyRateLimiter::new_action_limiter();
+    let active_resource_locks = Arc::new(Mutex::new(HashSet::new()));
     let job_service = JobService::new(pool.clone());
 
     let app_state = AppState {
         pool,
         config,
         auth_limiter,
+        action_limiter,
+        active_resource_locks,
         collector,
         job_service,
     };

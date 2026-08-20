@@ -134,7 +134,12 @@ pub async fn execute_resource_action(
     Path(id): Path<String>,
     Json(payload): Json<ActionRequest>,
 ) -> Result<(StatusCode, Json<ActionAcceptedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    // Validate action allowed
+    // 1. User action rate limit check (10 requests / 60 seconds per user: SPEC.md §19.10)
+    if let Err(e) = state.action_limiter.check(user.id.clone()).await {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse::from(e))));
+    }
+
+    // 2. Validate action allowed
     match payload.action.as_str() {
         "start" | "stop" | "restart" => {}
         other => {
@@ -148,7 +153,7 @@ pub async fn execute_resource_action(
         }
     }
 
-    // Verify resource exists
+    // 3. Verify resource exists
     let detail = state
         .collector
         .get_resource_detail(&id)
@@ -166,28 +171,46 @@ pub async fn execute_resource_action(
         ));
     }
 
+    // 4. Concurrent action lock for this resource
+    {
+        let mut locks = state.active_resource_locks.lock().await;
+        if locks.contains(&id) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ErrorResponse::from(AppError::ResourceLocked(id))),
+            ));
+        }
+        locks.insert(id.clone());
+    }
+
     let params_json = serde_json::json!({
         "resource_id": id,
         "action": payload.action,
     })
     .to_string();
 
-    let job = state
+    let job = match state
         .job_service
         .submit("resource.action", None, &params_json, &user.username)
         .await
-        .map_err(|e| {
-            (
+    {
+        Ok(j) => j,
+        Err(e) => {
+            // Release lock if job submission failed
+            state.active_resource_locks.lock().await.remove(&id);
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::from(e)),
-            )
-        })?;
+            ));
+        }
+    };
 
-    // Spawn execution
+    // 5. Spawn background execution task
     let job_id = job.id.clone();
     let job_service = state.job_service.clone();
     let pool = state.pool.clone();
     let collector = state.collector.clone();
+    let res_locks = state.active_resource_locks.clone();
     let res_id = id.clone();
     let action = payload.action.clone();
     let user_id = user.id.clone();
@@ -278,6 +301,9 @@ pub async fn execute_resource_action(
                 .await;
             }
         }
+
+        // Release concurrent action lock
+        res_locks.lock().await.remove(&res_id);
     });
 
     Ok((

@@ -599,6 +599,23 @@ async fn test_resources_and_actions_api() {
     let act_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let job_id = act_json["job_id"].as_str().unwrap();
 
+    // 7b. Attempt immediate concurrent action on the SAME resource while job is running -> 409 Conflict
+    let concurrent_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/resources/systemd:caddy.service/actions")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "action": "restart"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let concurrent_res = app.clone().oneshot(concurrent_req).await.unwrap();
+    assert_eq!(concurrent_res.status(), StatusCode::CONFLICT);
+
     // 8. Wait for job to execute and verify job details
     tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
 

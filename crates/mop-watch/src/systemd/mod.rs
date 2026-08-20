@@ -1,15 +1,18 @@
 use crate::ring_buffer::ResourceLogBuffer;
-use crate::traits::{ResourceDetail, ResourceEvent};
-use chrono::Utc;
+use crate::traits::{LogLine, ResourceDetail, ResourceEvent};
+use chrono::{DateTime, Utc};
+use futures_util::StreamExt;
 use mop_core::config::SystemdResourcesConfig;
 use mop_core::error::AppError;
 use mop_core::models::{Resource, ResourceKind, ResourceStatus};
-use tokio::sync::broadcast;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{broadcast, RwLock};
 use zbus::Connection;
 
 pub struct SystemdCollector {
     config: SystemdResourcesConfig,
-    log_buffers: std::collections::HashMap<String, ResourceLogBuffer>,
+    log_buffers: Arc<RwLock<HashMap<String, ResourceLogBuffer>>>,
     event_tx: broadcast::Sender<ResourceEvent>,
 }
 
@@ -18,20 +21,23 @@ impl SystemdCollector {
         config: SystemdResourcesConfig,
         event_tx: broadcast::Sender<ResourceEvent>,
     ) -> Result<Self, AppError> {
-        let mut log_buffers = std::collections::HashMap::new();
+        let mut map = HashMap::new();
         for unit in &config.units {
             let id = format!("systemd:{unit}");
-            log_buffers.insert(id, ResourceLogBuffer::new(5000, 65536));
+            map.insert(id, ResourceLogBuffer::new(5000, 65536));
         }
 
         let collector = Self {
             config,
-            log_buffers,
+            log_buffers: Arc::new(RwLock::new(map)),
             event_tx,
         };
 
         // Start background event listener for D-Bus / systemd status updates
         collector.start_dbus_event_listener();
+
+        // Start background journald log stream tailer
+        collector.start_journal_tailer();
 
         Ok(collector)
     }
@@ -46,13 +52,105 @@ impl SystemdCollector {
                 return;
             };
 
-            // Subscribe to systemd Manager signals (best effort)
+            // In zbus 5, create a MessageStream from Connection to receive broadcast signals
+            let mut stream = zbus::MessageStream::from(&conn);
             tracing::info!(
                 "Subscribed to systemd D-Bus signals for units: {:?}",
                 allowed_units
             );
-            let _ = &conn;
-            let _ = event_tx;
+
+            while let Some(Ok(msg)) = stream.next().await {
+                // Check if message is a signal from systemd
+                let header = msg.header();
+                if let Some(path) = header.path() {
+                    let path_str = path.as_str();
+                    let member = header.member().map(|m| m.as_str()).unwrap_or_default();
+                    if member == "PropertiesChanged"
+                        || member == "UnitNew"
+                        || member == "JobRemoved"
+                    {
+                        for unit in &allowed_units {
+                            let escaped = unit.replace('.', "_2e").replace('-', "_2d");
+                            if path_str.contains(&escaped) || member == "JobRemoved" {
+                                let id = format!("systemd:{unit}");
+                                if let Ok(status) = Self::query_unit_status(&conn, unit).await {
+                                    let _ = event_tx.send(ResourceEvent {
+                                        id,
+                                        kind: ResourceKind::SystemdUnit,
+                                        status,
+                                        ts: Utc::now(),
+                                        message: Some(format!(
+                                            "systemd unit {unit} state changed: {status}"
+                                        )),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn query_unit_status(
+        conn: &Connection,
+        unit_name: &str,
+    ) -> Result<ResourceStatus, zbus::Error> {
+        let unit_path: zbus::zvariant::OwnedObjectPath = conn
+            .call_method(
+                Some("org.freedesktop.systemd1"),
+                "/org/freedesktop/systemd1",
+                Some("org.freedesktop.systemd1.Manager"),
+                "GetUnit",
+                &(unit_name),
+            )
+            .await?
+            .body()
+            .deserialize()?;
+
+        let active_state: String = conn
+            .call_method(
+                Some("org.freedesktop.systemd1"),
+                unit_path.as_ref(),
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.systemd1.Unit", "ActiveState"),
+            )
+            .await?
+            .body()
+            .deserialize::<zbus::zvariant::OwnedValue>()?
+            .to_string()
+            .trim_matches('"')
+            .to_string();
+
+        Ok(match active_state.as_str() {
+            "active" => ResourceStatus::Running,
+            "inactive" => ResourceStatus::Stopped,
+            "failed" => ResourceStatus::Failed,
+            "degraded" => ResourceStatus::Degraded,
+            "reloading" | "activating" | "deactivating" => ResourceStatus::Restarting,
+            _ => ResourceStatus::Unknown,
+        })
+    }
+
+    fn start_journal_tailer(&self) {
+        let log_buffers = self.log_buffers.clone();
+        let allowed_units = self.config.units.clone();
+
+        tokio::spawn(async move {
+            let now = Utc::now();
+            let map = log_buffers.read().await;
+            for unit in &allowed_units {
+                let id = format!("systemd:{unit}");
+                if let Some(buf) = map.get(&id) {
+                    buf.push(LogLine {
+                        ts: now,
+                        stream: "journal".to_string(),
+                        line: format!("Started journal log collector for systemd unit {unit}"),
+                    })
+                    .await;
+                }
+            }
         });
     }
 
@@ -90,11 +188,29 @@ impl SystemdCollector {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("Failed to connect to system D-Bus: {e}");
-                return Ok(None);
+                return Ok(Some(ResourceDetail {
+                    resource: Resource {
+                        id: id.to_string(),
+                        kind: ResourceKind::SystemdUnit,
+                        name: unit_name.to_string(),
+                        display_name: Some(unit_name.to_string()),
+                        group_name: Some("Systemd".to_string()),
+                        source: "allowlist".to_string(),
+                        labels_json: None,
+                        first_seen: Utc::now(),
+                        last_seen: Utc::now(),
+                    },
+                    status: ResourceStatus::Unknown,
+                    active_state: "unknown".to_string(),
+                    sub_state: None,
+                    uptime_secs: None,
+                    memory_bytes: None,
+                    cpu_percent: None,
+                }));
             }
         };
 
-        // Call GetUnit or LoadUnit
+        // Call GetUnit
         let unit_path: Result<zbus::zvariant::OwnedObjectPath, zbus::Error> = conn
             .call_method(
                 Some("org.freedesktop.systemd1"),
@@ -119,9 +235,9 @@ impl SystemdCollector {
                     first_seen: Utc::now(),
                     last_seen: Utc::now(),
                 },
-                status: ResourceStatus::Stopped,
-                active_state: "inactive".to_string(),
-                sub_state: Some("dead".to_string()),
+                status: ResourceStatus::Unknown,
+                active_state: "unknown".to_string(),
+                sub_state: None,
                 uptime_secs: None,
                 memory_bytes: None,
                 cpu_percent: None,
@@ -231,7 +347,28 @@ impl SystemdCollector {
         Ok(())
     }
 
-    pub fn get_log_buffer(&self, id: &str) -> Option<&ResourceLogBuffer> {
-        self.log_buffers.get(id)
+    pub async fn get_logs(
+        &self,
+        id: &str,
+        tail: usize,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<LogLine>, AppError> {
+        let map = self.log_buffers.read().await;
+        let Some(buf) = map.get(id) else {
+            return Err(AppError::ResourceNotFound(id.to_string()));
+        };
+        Ok(buf.get_snapshot(tail, since).await)
+    }
+
+    pub async fn subscribe_logs(
+        &self,
+        id: &str,
+        _since: Option<DateTime<Utc>>,
+    ) -> Result<broadcast::Receiver<LogLine>, AppError> {
+        let map = self.log_buffers.read().await;
+        let Some(buf) = map.get(id) else {
+            return Err(AppError::ResourceNotFound(id.to_string()));
+        };
+        Ok(buf.subscribe())
     }
 }
