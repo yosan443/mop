@@ -1,0 +1,36 @@
+[package]
+name = "mop-http"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+mop-core = { workspace = true }
+mop-db = { workspace = true }
+mop-auth = { workspace = true }
+mop-watch = { workspace = true }
+mop-jobs = { workspace = true }
+axum = { workspace = true }
+axum-login = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower-sessions = { workspace = true }
+tower-sessions-sqlx-store = { workspace = true }
+http = { workspace = true }
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"

@@ -1,0 +1,15 @@
+[package]
+name = "mop-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }

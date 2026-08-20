@@ -1,0 +1,67 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # 1. Create mop system user and group if not existing
+        if ! getent group mop >/dev/null; then
+            addgroup --system mop
+        fi
+
+        if ! getent passwd mop >/dev/null; then
+            adduser --system \
+                --ingroup mop \
+                --home /var/lib/mop \
+                --no-create-home \
+                --gecos "mop daemon" \
+                mop
+        fi
+
+        # 2. Add mop to systemd-journal group for reading journal logs
+        if getent group systemd-journal >/dev/null; then
+            adduser mop systemd-journal || true
+        fi
+
+        # 3. Create required directories
+        mkdir -p /etc/mop
+        mkdir -p /var/lib/mop/plugins
+        mkdir -p /var/lib/mop/backups
+        chown -R mop:mop /var/lib/mop
+        chmod 0750 /var/lib/mop
+
+        # 4. Install default config if not present
+        if [ ! -f /etc/mop/config.toml ]; then
+            cat << 'EOF' > /etc/mop/config.toml
+[server]
+bind = "127.0.0.1:8787"
+
+[database]
+path = "/var/lib/mop/mop.db"
+
+[auth]
+registration = "first_user"
+min_password_len = 10
+session_hours = 12
+
+[resources.systemd]
+units = ["caddy.service", "nginx.service"]
+allow_actions = ["start", "stop", "restart"]
+
+[resources.docker]
+containers = ["komga"]
+label_selector = "mop.managed=true"
+allow_actions = ["start", "stop", "restart"]
+EOF
+            chmod 0640 /etc/mop/config.toml
+            chown root:mop /etc/mop/config.toml
+        fi
+
+        # 5. Reload systemd and enable service
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null || true
+            systemctl enable mop.service >/dev/null || true
+        fi
+    ;;
+esac
+
+exit 0

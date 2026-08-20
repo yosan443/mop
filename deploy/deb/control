@@ -1,0 +1,10 @@
+Package: mop
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: mop contributors <yosan443@users.noreply.github.com>
+Depends: systemd (>= 245), policykit-1 | polkitd, libc6 (>= 2.31), libsqlite3-0 (>= 3.31)
+Description: Master-of-Process daemon and management web console
+ mop is a lightweight, secure process supervisor and Docker/Systemd
+ management console with embedded Vue 3 SPA and PWA support.

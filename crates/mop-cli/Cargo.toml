@@ -1,0 +1,27 @@
+[package]
+name = "mop-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mop"
+path = "src/main.rs"
+
+[dependencies]
+mop-core = { workspace = true }
+mop-db = { workspace = true }
+mop-auth = { workspace = true }
+mop-watch = { workspace = true }
+mop-jobs = { workspace = true }
+mop-plugin = { workspace = true }
+mop-plugin-sdk = { workspace = true }
+mop-http = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true }
