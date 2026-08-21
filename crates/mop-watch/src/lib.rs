@@ -1,3 +1,4 @@
+pub mod compose;
 pub mod composite;
 pub mod docker;
 pub mod fake;
@@ -5,6 +6,7 @@ pub mod ring_buffer;
 pub mod systemd;
 pub mod traits;
 
+pub use compose::ComposeCollector;
 pub use composite::CompositeCollector;
 pub use docker::DockerCollector;
 pub use fake::FakeResourceCollector;

@@ -69,7 +69,14 @@ impl DockerCollector {
             while let Some(event_result) = stream.next().await {
                 if let Ok(evt) = event_result {
                     let action = evt.action.unwrap_or_default();
-                    let actor_id = evt.actor.and_then(|a| a.id).unwrap_or_default();
+                    let container_name = evt
+                        .actor
+                        .as_ref()
+                        .and_then(|a| a.attributes.as_ref())
+                        .and_then(|attr| attr.get("name").cloned())
+                        .map(|n| n.trim_start_matches('/').to_string())
+                        .or_else(|| evt.actor.as_ref().and_then(|a| a.id.clone()))
+                        .unwrap_or_default();
                     let status = match action.as_str() {
                         "start" | "unpause" => ResourceStatus::Running,
                         "stop" | "die" | "kill" | "pause" => ResourceStatus::Stopped,
@@ -78,7 +85,7 @@ impl DockerCollector {
                     };
 
                     let _ = event_tx.send(ResourceEvent {
-                        id: format!("docker:{actor_id}"),
+                        id: format!("docker:{container_name}"),
                         kind: ResourceKind::DockerContainer,
                         status,
                         ts: Utc::now(),

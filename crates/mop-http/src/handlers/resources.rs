@@ -164,23 +164,68 @@ pub async fn execute_resource_action(
                 Json(ErrorResponse::from(e)),
             )
         })?;
-    if detail.is_none() {
+    let Some(resource_detail) = detail else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse::from(AppError::ResourceNotFound(id))),
         ));
+    };
+
+    // Determine all dependent/child resource IDs for hierarchical locking and validate managed status
+    let mut locked_ids = vec![id.clone()];
+    if id.starts_with("compose_project:") || id.starts_with("compose_service:") {
+        if let Some(labels_json) = &resource_detail.resource.labels_json {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(labels_json) {
+                let is_managed = val["is_managed"].as_bool().unwrap_or_else(|| {
+                    val["mop.managed"].as_str() == Some("true")
+                        || val["managed_count"].as_u64().unwrap_or(0) > 0
+                        || val["managed_containers_count"].as_u64().unwrap_or(0) > 0
+                });
+
+                if !is_managed {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        Json(ErrorResponse::from(AppError::ActionNotAllowed(
+                            payload.action,
+                            format!("{id} has no managed containers (mop.managed=true required)"),
+                        ))),
+                    ));
+                }
+
+                if let Some(containers) = val["containers"].as_array() {
+                    for c in containers {
+                        if c["is_managed"].as_bool().unwrap_or(false) {
+                            if let Some(name) = c["name"].as_str() {
+                                locked_ids.push(format!("docker:{name}"));
+                            }
+                            if let Some(svc) = c["service"].as_str() {
+                                if let Some(proj) = val["project"].as_str() {
+                                    locked_ids.push(format!("compose_service:{proj}:{svc}"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // 4. Concurrent action lock for this resource
+    // 4. Hierarchical concurrent action lock for this resource and managed children
     {
         let mut locks = state.active_resource_locks.lock().await;
-        if locks.contains(&id) {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ErrorResponse::from(AppError::ResourceLocked(id))),
-            ));
+        for lock_id in &locked_ids {
+            if locks.contains(lock_id) {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ErrorResponse::from(AppError::ResourceLocked(
+                        lock_id.clone(),
+                    ))),
+                ));
+            }
         }
-        locks.insert(id.clone());
+        for lock_id in &locked_ids {
+            locks.insert(lock_id.clone());
+        }
     }
 
     let params_json = serde_json::json!({
@@ -196,8 +241,11 @@ pub async fn execute_resource_action(
     {
         Ok(j) => j,
         Err(e) => {
-            // Release lock if job submission failed
-            state.active_resource_locks.lock().await.remove(&id);
+            // Release locks if job submission failed
+            let mut locks = state.active_resource_locks.lock().await;
+            for lock_id in &locked_ids {
+                locks.remove(lock_id);
+            }
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::from(e)),
@@ -211,6 +259,7 @@ pub async fn execute_resource_action(
     let pool = state.pool.clone();
     let collector = state.collector.clone();
     let res_locks = state.active_resource_locks.clone();
+    let all_locked_ids = locked_ids.clone();
     let res_id = id.clone();
     let action = payload.action.clone();
     let user_id = user.id.clone();
@@ -302,8 +351,11 @@ pub async fn execute_resource_action(
             }
         }
 
-        // Release concurrent action lock
-        res_locks.lock().await.remove(&res_id);
+        // Release hierarchical concurrent action locks
+        let mut locks = res_locks.lock().await;
+        for lock_id in &all_locked_ids {
+            locks.remove(lock_id);
+        }
     });
 
     Ok((

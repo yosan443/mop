@@ -511,11 +511,14 @@ async fn test_resources_and_actions_api() {
 
     let body = list_res.into_body().collect().await.unwrap().to_bytes();
     let resources: Vec<Resource> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(resources.len(), 3);
+    assert_eq!(resources.len(), 8);
     let names: Vec<&str> = resources.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"caddy.service"));
     assert!(names.contains(&"nginx.service"));
     assert!(names.contains(&"komga"));
+    assert!(names.contains(&"media-stack"));
+    assert!(names.contains(&"manga-worker"));
+    assert!(names.contains(&"db"));
 
     // 4. Get resource detail
     let detail_req = Request::builder()
@@ -631,6 +634,40 @@ async fn test_resources_and_actions_api() {
     let job_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(job_json["job"]["status"], "succeeded");
     assert!(!job_json["events"].as_array().unwrap().is_empty());
+
+    // 8b. Unmanaged compose service action -> 403 Forbidden (SPEC §9.3 & 不変条件 3)
+    let unmanaged_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/resources/compose_service:media-stack:db/actions")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "action": "restart"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let unmanaged_res = app.clone().oneshot(unmanaged_req).await.unwrap();
+    assert_eq!(unmanaged_res.status(), StatusCode::FORBIDDEN);
+
+    // 8c. Managed compose service action -> 202 Accepted
+    let managed_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/resources/compose_service:media-stack:manga-worker/actions")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "action": "restart"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let managed_res = app.clone().oneshot(managed_req).await.unwrap();
+    assert_eq!(managed_res.status(), StatusCode::ACCEPTED);
 
     // 9. Verify audit log entry for resource.restart
     let audits = AuditRepo::list(&pool).await.unwrap();
