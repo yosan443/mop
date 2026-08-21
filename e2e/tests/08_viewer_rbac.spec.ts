@@ -25,13 +25,18 @@ test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
     await page.click('#nav-users');
     await page.waitForURL((url) => url.pathname.includes('/settings/users'));
 
-    // Create viewer
+    // Create viewer and wait for user creation API to succeed (201 Created)
     await page.click('#btn-open-create-user');
     await page.fill('#new-username', 'viewer_bob');
     await page.fill('#new-password', 'ViewerBobPass123!');
     await page.selectOption('#new-role', 'viewer');
-    await page.click('#btn-submit-new-user');
-    await page.waitForTimeout(500);
+
+    const [createUserResponse] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/api/v1/users') && res.request().method() === 'POST'),
+      page.click('#btn-submit-new-user'),
+    ]);
+    expect(createUserResponse.status()).toBe(201);
+    await page.waitForLoadState('networkidle');
 
     // 2. Return to dashboard and logout admin
     await page.goto('/');
