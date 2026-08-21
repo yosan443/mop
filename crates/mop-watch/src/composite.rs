@@ -24,7 +24,7 @@ impl CompositeCollector {
         let docker = DockerCollector::new(config.docker, event_tx.clone()).await?;
 
         let docker_client = Docker::connect_with_local_defaults().ok();
-        let compose = ComposeCollector::new(docker_client, event_tx.clone());
+        let compose = ComposeCollector::new(docker_client, event_tx.clone(), docker.log_buffers());
 
         Ok(Self {
             systemd,

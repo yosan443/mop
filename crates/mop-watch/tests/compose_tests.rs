@@ -153,3 +153,45 @@ async fn test_fake_compose_resources_and_managed_action() {
         .await;
     assert!(proj_res.is_ok());
 }
+
+#[tokio::test]
+async fn test_compose_service_and_project_aggregated_logs() {
+    let collector = FakeResourceCollector::new();
+    // Allow background logs to populate
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    // 1. Get logs for compose_service
+    let svc_logs = collector
+        .get_logs("compose_service:media-stack:manga-worker", 20, None)
+        .await
+        .expect("Failed to get compose service logs");
+
+    assert!(!svc_logs.is_empty(), "Service logs should not be empty");
+    assert!(
+        svc_logs
+            .iter()
+            .any(|l| l.line.contains("[manga-worker|media-stack-manga-worker-1]")),
+        "Service logs must contain [service|container] prefix, found: {:?}",
+        svc_logs.iter().map(|l| &l.line).collect::<Vec<_>>()
+    );
+
+    // 2. Get logs for compose_project
+    let proj_logs = collector
+        .get_logs("compose_project:media-stack", 20, None)
+        .await
+        .expect("Failed to get compose project logs");
+
+    assert!(!proj_logs.is_empty(), "Project logs should not be empty");
+    assert!(
+        proj_logs
+            .iter()
+            .any(|l| l.line.contains("[manga-worker|media-stack-manga-worker-1]")),
+        "Project logs must contain manga-worker prefix"
+    );
+    assert!(
+        proj_logs
+            .iter()
+            .any(|l| l.line.contains("[db|media-stack-db-1]")),
+        "Project logs must contain db prefix"
+    );
+}

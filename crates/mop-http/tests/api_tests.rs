@@ -529,7 +529,7 @@ async fn test_resources_and_actions_api() {
     let detail_res = app.clone().oneshot(detail_req).await.unwrap();
     assert_eq!(detail_res.status(), StatusCode::OK);
 
-    // 5. Get resource logs
+    // 5. Get resource logs (systemd and compose service)
     let logs_req = Request::builder()
         .uri("/api/v1/resources/systemd:caddy.service/logs?tail=10")
         .header(header::COOKIE, admin_cookie.clone())
@@ -537,6 +537,26 @@ async fn test_resources_and_actions_api() {
         .unwrap();
     let logs_res = app.clone().oneshot(logs_req).await.unwrap();
     assert_eq!(logs_res.status(), StatusCode::OK);
+
+    let compose_logs_req = Request::builder()
+        .uri("/api/v1/resources/compose_service:media-stack:manga-worker/logs?tail=10")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let compose_logs_res = app.clone().oneshot(compose_logs_req).await.unwrap();
+    assert_eq!(compose_logs_res.status(), StatusCode::OK);
+    let compose_logs_body = compose_logs_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let compose_logs: Vec<serde_json::Value> = serde_json::from_slice(&compose_logs_body).unwrap();
+    assert!(!compose_logs.is_empty());
+    assert!(compose_logs.iter().any(|l| l["line"]
+        .as_str()
+        .unwrap()
+        .contains("[manga-worker|media-stack-manga-worker-1]")));
 
     // 6. Viewer login and try to execute action -> 403 Forbidden
     let vi_login_res = app

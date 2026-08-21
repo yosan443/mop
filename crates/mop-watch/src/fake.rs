@@ -370,6 +370,75 @@ impl ResourceCollector for FakeResourceCollector {
         since: Option<DateTime<Utc>>,
     ) -> Result<Vec<LogLine>, AppError> {
         let map = self.log_buffers.read().await;
+
+        if id == "compose_service:media-stack:manga-worker" {
+            let mut merged = Vec::new();
+            if let Some(buf) = map.get("docker:media-stack-manga-worker-1") {
+                let lines = buf.get_snapshot(tail, since).await;
+                for line in lines {
+                    let prefix = "[manga-worker|media-stack-manga-worker-1]";
+                    let line_content = if line.line.starts_with(prefix) {
+                        line.line
+                    } else {
+                        format!("{prefix} {}", line.line)
+                    };
+                    merged.push(LogLine {
+                        ts: line.ts,
+                        stream: line.stream,
+                        line: line_content,
+                    });
+                }
+            }
+            if let Some(buf) = map.get(id) {
+                merged.extend(buf.get_snapshot(tail, since).await);
+            }
+            merged.sort_by_key(|l| l.ts);
+            if merged.len() > tail {
+                let start = merged.len() - tail;
+                merged = merged[start..].to_vec();
+            }
+            return Ok(merged);
+        }
+
+        if id == "compose_project:media-stack" {
+            let mut merged = Vec::new();
+            let children = [
+                (
+                    "manga-worker",
+                    "docker:media-stack-manga-worker-1",
+                    "media-stack-manga-worker-1",
+                ),
+                ("db", "docker:media-stack-db-1", "media-stack-db-1"),
+            ];
+            for (svc, cont_id, cont_name) in children {
+                if let Some(buf) = map.get(cont_id) {
+                    let lines = buf.get_snapshot(tail, since).await;
+                    for line in lines {
+                        let prefix = format!("[{svc}|{cont_name}]");
+                        let line_content = if line.line.starts_with(&prefix) {
+                            line.line
+                        } else {
+                            format!("{prefix} {}", line.line)
+                        };
+                        merged.push(LogLine {
+                            ts: line.ts,
+                            stream: line.stream,
+                            line: line_content,
+                        });
+                    }
+                }
+            }
+            if let Some(buf) = map.get(id) {
+                merged.extend(buf.get_snapshot(tail, since).await);
+            }
+            merged.sort_by_key(|l| l.ts);
+            if merged.len() > tail {
+                let start = merged.len() - tail;
+                merged = merged[start..].to_vec();
+            }
+            return Ok(merged);
+        }
+
         let Some(buf) = map.get(id) else {
             return Err(AppError::ResourceNotFound(id.to_string()));
         };
@@ -383,6 +452,67 @@ impl ResourceCollector for FakeResourceCollector {
         _since: Option<DateTime<Utc>>,
     ) -> Result<broadcast::Receiver<LogLine>, AppError> {
         let map = self.log_buffers.read().await;
+
+        if id == "compose_service:media-stack:manga-worker" {
+            let (tx, rx) = broadcast::channel(512);
+            if let Some(buf) = map.get("docker:media-stack-manga-worker-1") {
+                let mut child_rx = buf.subscribe();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    while let Ok(line) = child_rx.recv().await {
+                        let prefix = "[manga-worker|media-stack-manga-worker-1]";
+                        let line_content = if line.line.starts_with(prefix) {
+                            line.line
+                        } else {
+                            format!("{prefix} {}", line.line)
+                        };
+                        let _ = tx_clone.send(LogLine {
+                            ts: line.ts,
+                            stream: line.stream,
+                            line: line_content,
+                        });
+                    }
+                });
+            }
+            return Ok(rx);
+        }
+
+        if id == "compose_project:media-stack" {
+            let (tx, rx) = broadcast::channel(512);
+            let children = [
+                (
+                    "manga-worker",
+                    "docker:media-stack-manga-worker-1",
+                    "media-stack-manga-worker-1",
+                ),
+                ("db", "docker:media-stack-db-1", "media-stack-db-1"),
+            ];
+            for (svc, cont_id, cont_name) in children {
+                if let Some(buf) = map.get(cont_id) {
+                    let mut child_rx = buf.subscribe();
+                    let tx_clone = tx.clone();
+                    let svc_str = svc.to_string();
+                    let cont_str = cont_name.to_string();
+                    tokio::spawn(async move {
+                        while let Ok(line) = child_rx.recv().await {
+                            let prefix = format!("[{svc_str}|{cont_str}]");
+                            let line_content = if line.line.starts_with(&prefix) {
+                                line.line
+                            } else {
+                                format!("{prefix} {}", line.line)
+                            };
+                            let _ = tx_clone.send(LogLine {
+                                ts: line.ts,
+                                stream: line.stream,
+                                line: line_content,
+                            });
+                        }
+                    });
+                }
+            }
+            return Ok(rx);
+        }
+
         let Some(buf) = map.get(id) else {
             return Err(AppError::ResourceNotFound(id.to_string()));
         };

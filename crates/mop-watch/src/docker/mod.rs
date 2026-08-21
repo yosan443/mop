@@ -51,6 +51,10 @@ impl DockerCollector {
         Ok(collector)
     }
 
+    pub fn log_buffers(&self) -> Arc<RwLock<HashMap<String, ResourceLogBuffer>>> {
+        self.log_buffers.clone()
+    }
+
     fn start_docker_event_listener(&self) {
         let Some(docker) = self.docker.clone() else {
             return;

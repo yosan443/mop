@@ -139,14 +139,20 @@ pub fn aggregate_statuses(statuses: &[ResourceStatus]) -> ResourceStatus {
 pub struct ComposeCollector {
     docker: Option<Docker>,
     log_buffers: Arc<RwLock<HashMap<String, ResourceLogBuffer>>>,
+    docker_log_buffers: Arc<RwLock<HashMap<String, ResourceLogBuffer>>>,
     event_tx: broadcast::Sender<ResourceEvent>,
 }
 
 impl ComposeCollector {
-    pub fn new(docker: Option<Docker>, event_tx: broadcast::Sender<ResourceEvent>) -> Self {
+    pub fn new(
+        docker: Option<Docker>,
+        event_tx: broadcast::Sender<ResourceEvent>,
+        docker_log_buffers: Arc<RwLock<HashMap<String, ResourceLogBuffer>>>,
+    ) -> Self {
         Self {
             docker,
             log_buffers: Arc::new(RwLock::new(HashMap::new())),
+            docker_log_buffers,
             event_tx,
         }
     }
@@ -627,11 +633,75 @@ impl ComposeCollector {
         tail: usize,
         since: Option<DateTime<Utc>>,
     ) -> Result<Vec<LogLine>, AppError> {
-        let mut map = self.log_buffers.write().await;
-        let buf = map
-            .entry(id.to_string())
-            .or_insert_with(|| ResourceLogBuffer::new(5000, 65536));
-        Ok(buf.get_snapshot(tail, since).await)
+        let containers = self.fetch_compose_containers().await?;
+        let target_containers: Vec<ComposeContainerInfo> =
+            if let Some(service_part) = id.strip_prefix("compose_service:") {
+                let parts: Vec<&str> = service_part.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return Err(AppError::ResourceNotFound(id.to_string()));
+                }
+                let (proj, svc) = (parts[0], parts[1]);
+                containers
+                    .into_iter()
+                    .filter(|c| c.project == proj && c.service == svc)
+                    .collect()
+            } else if let Some(proj) = id.strip_prefix("compose_project:") {
+                containers
+                    .into_iter()
+                    .filter(|c| c.project == proj)
+                    .collect()
+            } else {
+                return Err(AppError::ResourceNotFound(id.to_string()));
+            };
+
+        if target_containers.is_empty() {
+            let map = self.log_buffers.read().await;
+            if let Some(buf) = map.get(id) {
+                return Ok(buf.get_snapshot(tail, since).await);
+            }
+            return Ok(Vec::new());
+        }
+
+        let docker_map = self.docker_log_buffers.read().await;
+        let mut merged_lines = Vec::new();
+
+        for c in target_containers {
+            let container_res_id = format!("docker:{}", c.container_name);
+            if let Some(buf) = docker_map.get(&container_res_id) {
+                let lines = buf.get_snapshot(tail, since).await;
+                for line in lines {
+                    let prefix = format!("[{}|{}]", c.service, c.container_name);
+                    let line_content = if line.line.starts_with(&prefix) {
+                        line.line
+                    } else {
+                        format!("{prefix} {}", line.line)
+                    };
+                    merged_lines.push(LogLine {
+                        ts: line.ts,
+                        stream: line.stream,
+                        line: line_content,
+                    });
+                }
+            }
+        }
+
+        // Also check if self buffer has any direct entries
+        {
+            let map = self.log_buffers.read().await;
+            if let Some(buf) = map.get(id) {
+                let lines = buf.get_snapshot(tail, since).await;
+                merged_lines.extend(lines);
+            }
+        }
+
+        merged_lines.sort_by_key(|l| l.ts);
+
+        if merged_lines.len() > tail {
+            let start = merged_lines.len() - tail;
+            merged_lines = merged_lines[start..].to_vec();
+        }
+
+        Ok(merged_lines)
     }
 
     pub async fn subscribe_logs(
@@ -639,11 +709,69 @@ impl ComposeCollector {
         id: &str,
         _since: Option<DateTime<Utc>>,
     ) -> Result<broadcast::Receiver<LogLine>, AppError> {
-        let mut map = self.log_buffers.write().await;
-        let buf = map
-            .entry(id.to_string())
-            .or_insert_with(|| ResourceLogBuffer::new(5000, 65536));
-        Ok(buf.subscribe())
+        let (tx, rx) = broadcast::channel(512);
+        let containers = self.fetch_compose_containers().await?;
+        let target_containers: Vec<ComposeContainerInfo> =
+            if let Some(service_part) = id.strip_prefix("compose_service:") {
+                let parts: Vec<&str> = service_part.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return Err(AppError::ResourceNotFound(id.to_string()));
+                }
+                let (proj, svc) = (parts[0], parts[1]);
+                containers
+                    .into_iter()
+                    .filter(|c| c.project == proj && c.service == svc)
+                    .collect()
+            } else if let Some(proj) = id.strip_prefix("compose_project:") {
+                containers
+                    .into_iter()
+                    .filter(|c| c.project == proj)
+                    .collect()
+            } else {
+                return Err(AppError::ResourceNotFound(id.to_string()));
+            };
+
+        let docker_map = self.docker_log_buffers.read().await;
+        for c in target_containers {
+            let container_res_id = format!("docker:{}", c.container_name);
+            if let Some(buf) = docker_map.get(&container_res_id) {
+                let mut container_rx = buf.subscribe();
+                let tx_clone = tx.clone();
+                let svc_name = c.service.clone();
+                let cont_name = c.container_name.clone();
+                tokio::spawn(async move {
+                    while let Ok(line) = container_rx.recv().await {
+                        let prefix = format!("[{svc_name}|{cont_name}]");
+                        let line_content = if line.line.starts_with(&prefix) {
+                            line.line
+                        } else {
+                            format!("{prefix} {}", line.line)
+                        };
+                        let _ = tx_clone.send(LogLine {
+                            ts: line.ts,
+                            stream: line.stream,
+                            line: line_content,
+                        });
+                    }
+                });
+            }
+        }
+
+        // Also subscribe to self buffer if any direct lines pushed
+        {
+            let map = self.log_buffers.read().await;
+            if let Some(buf) = map.get(id) {
+                let mut self_rx = buf.subscribe();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    while let Ok(line) = self_rx.recv().await {
+                        let _ = tx_clone.send(line);
+                    }
+                });
+            }
+        }
+
+        Ok(rx)
     }
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<ResourceEvent> {
