@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.7' } });
+test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.77' } });
 
 test.describe('Live Log Viewer & SSE Stream (M2)', () => {
   test('displays real-time log lines and responds to filter and search', async ({ page }) => {
@@ -13,12 +13,12 @@ test.describe('Live Log Viewer & SSE Stream (M2)', () => {
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.fill('#confirmPassword', 'AdminSecretPassword123!');
       await page.click('#btn-submit-setup');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     } else if (page.url().includes('/login')) {
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.click('#btn-submit-login');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     }
 
     // 2. Navigate to resource detail

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.5' } });
+test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.55' } });
 
 test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
   test('displays resource cards, summary statistics, and navigates to detail', async ({ page }) => {
@@ -13,12 +13,12 @@ test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.fill('#confirmPassword', 'AdminSecretPassword123!');
       await page.click('#btn-submit-setup');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     } else if (page.url().includes('/login')) {
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.click('#btn-submit-login');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     }
 
     // 2. Verify summary cards
@@ -41,7 +41,7 @@ test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
 
     // 4. Click detail button on caddy card
     await page.click('#btn-detail-systemd-caddy-service');
-    await page.waitForURL(/.*\/resources\/systemd%3Acaddy\.service/);
+    await page.waitForURL((url) => url.pathname.includes('/resources/systemd:caddy.service') || url.pathname.includes('/resources/systemd%3Acaddy.service'));
 
     // 5. Verify resource detail page
     await expect(page.locator('#detail-resource-name')).toHaveText('Caddy Web Server');

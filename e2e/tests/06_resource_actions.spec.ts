@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.6' } });
+test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.66' } });
 
 test.describe('Resource Actions & Confirmation Modal (M2)', () => {
   test('triggers restart action via confirmation modal and transitions restarting -> running', async ({ page }) => {
@@ -13,12 +13,12 @@ test.describe('Resource Actions & Confirmation Modal (M2)', () => {
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.fill('#confirmPassword', 'AdminSecretPassword123!');
       await page.click('#btn-submit-setup');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     } else if (page.url().includes('/login')) {
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.click('#btn-submit-login');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     }
 
     // 2. Click restart on Caddy card
@@ -42,7 +42,7 @@ test.describe('Resource Actions & Confirmation Modal (M2)', () => {
 
     // 6. Navigate to detail view and assert status transitions from restarting -> running
     await page.click('#btn-detail-systemd-caddy-service');
-    await page.waitForURL(/.*\/resources\/systemd%3Acaddy\.service/);
+    await page.waitForURL((url) => url.pathname.includes('/resources/systemd:caddy.service') || url.pathname.includes('/resources/systemd%3Acaddy.service'));
 
     const statusBadge = page.locator('#detail-status-badge');
     // Verify running status is reached and maintained

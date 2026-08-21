@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.8' } });
+test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.88' } });
 
 test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
   test('hides action buttons for viewer role', async ({ page }) => {
@@ -13,17 +13,17 @@ test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.fill('#confirmPassword', 'AdminSecretPassword123!');
       await page.click('#btn-submit-setup');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     } else if (page.url().includes('/login')) {
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.click('#btn-submit-login');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     }
 
     // Navigate to users
     await page.click('#nav-users');
-    await page.waitForURL(/.*\/settings\/users/);
+    await page.waitForURL((url) => url.pathname.includes('/settings/users'));
 
     // Create viewer
     await page.click('#btn-open-create-user');
@@ -37,13 +37,13 @@ test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.click('#btn-logout');
-    await page.waitForURL(/.*\/login/);
+    await page.waitForURL((url) => url.pathname.includes('/login'));
 
     // 3. Login as viewer
     await page.fill('#username', 'viewer_bob');
     await page.fill('#password', 'ViewerBobPass123!');
     await page.click('#btn-submit-login');
-    await page.waitForURL('http://127.0.0.1:18999/');
+    await page.waitForURL((url) => url.pathname === '/');
 
     // 4. Verify action buttons do NOT exist on dashboard
     await expect(page.locator('.card-actions-footer')).not.toBeVisible();
