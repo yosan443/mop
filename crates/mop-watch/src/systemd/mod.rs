@@ -6,6 +6,7 @@ use mop_core::config::SystemdResourcesConfig;
 use mop_core::error::AppError;
 use mop_core::models::{Resource, ResourceKind, ResourceStatus};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use zbus::Connection;
@@ -138,15 +139,29 @@ impl SystemdCollector {
         let allowed_units = self.config.units.clone();
 
         tokio::spawn(async move {
-            let now = Utc::now();
+            let var_journal = Path::new("/var/log/journal");
+            let run_journal = Path::new("/run/log/journal");
+            let has_journal = var_journal.exists() || run_journal.exists();
+
+            if !has_journal {
+                tracing::debug!("systemd journal directory not found; journal tailing inactive in current environment");
+                return;
+            }
+
+            tracing::info!(
+                "Initializing systemd journal log collector for allowlisted units: {:?}",
+                allowed_units
+            );
+
+            // Populate initial status and journal tracking entries
             let map = log_buffers.read().await;
             for unit in &allowed_units {
                 let id = format!("systemd:{unit}");
                 if let Some(buf) = map.get(&id) {
                     buf.push(LogLine {
-                        ts: now,
+                        ts: Utc::now(),
                         stream: "journal".to_string(),
-                        line: format!("Started journal log collector for systemd unit {unit}"),
+                        line: format!("systemd journal log collector attached to {unit}"),
                     })
                     .await;
                 }
