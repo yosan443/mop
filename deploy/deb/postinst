@@ -56,7 +56,14 @@ EOF
             chown root:mop /etc/mop/config.toml
         fi
 
-        # 5. Reload systemd and enable service
+        # 5. Generate and install polkit rules from allowlist (SPEC.md §9.1)
+        if command -v mop >/dev/null 2>&1; then
+            mkdir -p /etc/polkit-1/rules.d
+            mop --config /etc/mop/config.toml polkit-rules --output /etc/polkit-1/rules.d/50-mop.rules || true
+            chmod 0644 /etc/polkit-1/rules.d/50-mop.rules 2>/dev/null || true
+        fi
+
+        # 6. Reload systemd and enable service
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null || true
             systemctl enable mop.service >/dev/null || true
