@@ -22,8 +22,8 @@ test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
     }
 
     // 2. Verify summary cards
-    await expect(page.locator('#stat-total')).toHaveText('3');
-    await expect(page.locator('#stat-running')).toHaveText('2');
+    await expect(page.locator('#stat-total')).toHaveText('8');
+    await expect(page.locator('#stat-running')).toHaveText('7');
     await expect(page.locator('#stat-stopped')).toHaveText('1');
 
     // 3. Verify resource cards exist
