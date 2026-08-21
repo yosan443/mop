@@ -1331,6 +1331,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "journald-query"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93ecf776f4e0919c7891217232ecdaef9b50dbebe3c868fd0ed71280234d771e"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1643,6 +1652,7 @@ dependencies = [
  "chrono",
  "futures",
  "futures-util",
+ "journald-query",
  "mop-core",
  "regex",
  "serde",
