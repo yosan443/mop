@@ -20,3 +20,4 @@ thiserror = { workspace = true }
 zbus = { workspace = true }
 bollard = { workspace = true }
 regex = { workspace = true }
+journald-query = "0.1.1"

@@ -264,6 +264,9 @@ impl ResourceCollector for FakeResourceCollector {
             ResourceKind::DockerContainer
         };
 
+        // Simulate realistic backend execution time so lock is held during immediate concurrent requests
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
         let target_status = match action {
             "start" => ResourceStatus::Running,
             "stop" => ResourceStatus::Stopped,

@@ -1,13 +1,15 @@
 use crate::ring_buffer::ResourceLogBuffer;
 use crate::traits::{LogLine, ResourceDetail, ResourceEvent};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use futures_util::StreamExt;
+use journald_query::tail::{JournalTail, TailConfig};
 use mop_core::config::SystemdResourcesConfig;
 use mop_core::error::AppError;
 use mop_core::models::{Resource, ResourceKind, ResourceStatus};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use zbus::Connection;
 
@@ -37,8 +39,8 @@ impl SystemdCollector {
         // Start background event listener for D-Bus / systemd status updates
         collector.start_dbus_event_listener();
 
-        // Start background journald log stream tailer
-        collector.start_journal_tailer();
+        // Start background journald real log collectors for allowlisted units
+        collector.start_journal_tailers();
 
         Ok(collector)
     }
@@ -61,7 +63,6 @@ impl SystemdCollector {
             );
 
             while let Some(Ok(msg)) = stream.next().await {
-                // Check if message is a signal from systemd
                 let header = msg.header();
                 if let Some(path) = header.path() {
                     let path_str = path.as_str();
@@ -134,37 +135,75 @@ impl SystemdCollector {
         })
     }
 
-    fn start_journal_tailer(&self) {
+    fn start_journal_tailers(&self) {
         let log_buffers = self.log_buffers.clone();
         let allowed_units = self.config.units.clone();
 
         tokio::spawn(async move {
             let var_journal = Path::new("/var/log/journal");
             let run_journal = Path::new("/run/log/journal");
-            let has_journal = var_journal.exists() || run_journal.exists();
 
-            if !has_journal {
+            let journal_dir = if var_journal.exists() {
+                Some("/var/log/journal")
+            } else if run_journal.exists() {
+                Some("/run/log/journal")
+            } else {
+                None
+            };
+
+            let Some(journal_path) = journal_dir else {
                 tracing::debug!("systemd journal directory not found; journal tailing inactive in current environment");
                 return;
-            }
+            };
 
             tracing::info!(
-                "Initializing systemd journal log collector for allowlisted units: {:?}",
+                "Starting journald reader using path '{}' for allowlisted units: {:?}",
+                journal_path,
                 allowed_units
             );
 
-            // Populate initial status and journal tracking entries
-            let map = log_buffers.read().await;
-            for unit in &allowed_units {
+            for unit in allowed_units {
                 let id = format!("systemd:{unit}");
-                if let Some(buf) = map.get(&id) {
-                    buf.push(LogLine {
-                        ts: Utc::now(),
-                        stream: "journal".to_string(),
-                        line: format!("systemd journal log collector attached to {unit}"),
-                    })
-                    .await;
-                }
+                let map = log_buffers.read().await;
+                let Some(buf) = map.get(&id).cloned() else {
+                    continue;
+                };
+                drop(map);
+
+                let u_name = unit.clone();
+                let j_path = journal_path.to_string();
+
+                // Spawn dedicated OS background thread for each allowlisted unit
+                let _ = std::thread::Builder::new()
+                    .name(format!("journal-tail-{u_name}"))
+                    .spawn(move || {
+                        let config = TailConfig::new("", &u_name, &j_path)
+                            .with_start_time_offset(Duration::from_secs(3600))
+                            .with_poll_interval(Duration::from_millis(500));
+
+                        match JournalTail::new(config) {
+                            Ok(mut tail) => {
+                                for entry in tail.iter().flatten() {
+                                    let ts = Utc
+                                        .timestamp_micros(entry.timestamp_utc as i64)
+                                        .single()
+                                        .unwrap_or_else(Utc::now);
+                                    let log_line = LogLine {
+                                        ts,
+                                        stream: "journal".to_string(),
+                                        line: entry.message,
+                                    };
+                                    let b = buf.clone();
+                                    tokio::spawn(async move {
+                                        b.push(log_line).await;
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("JournalTail not attached for unit {u_name}: {e}");
+                            }
+                        }
+                    });
             }
         });
     }
@@ -198,7 +237,6 @@ impl SystemdCollector {
             return Ok(None);
         }
 
-        // Try connecting to system D-Bus
         let conn = match Connection::system().await {
             Ok(c) => c,
             Err(e) => {
@@ -225,7 +263,6 @@ impl SystemdCollector {
             }
         };
 
-        // Call GetUnit
         let unit_path: Result<zbus::zvariant::OwnedObjectPath, zbus::Error> = conn
             .call_method(
                 Some("org.freedesktop.systemd1"),
@@ -259,7 +296,6 @@ impl SystemdCollector {
             }));
         };
 
-        // Query ActiveState & SubState from Unit interface
         let active_state: String = conn
             .call_method(
                 Some("org.freedesktop.systemd1"),
