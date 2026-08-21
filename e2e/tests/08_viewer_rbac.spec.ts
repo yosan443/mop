@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.88' } });
+test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.8.88' } });
 
 test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
   test('hides action buttons for viewer role', async ({ page }) => {
@@ -39,10 +39,16 @@ test.describe('Viewer RBAC & Hidden Actions (M2)', () => {
     await page.click('#btn-logout');
     await page.waitForURL((url) => url.pathname.includes('/login'));
 
-    // 3. Login as viewer
+    // 3. Login as viewer with explicit response wait
     await page.fill('#username', 'viewer_bob');
     await page.fill('#password', 'ViewerBobPass123!');
-    await page.click('#btn-submit-login');
+
+    const [loginResponse] = await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/api/v1/auth/login')),
+      page.click('#btn-submit-login'),
+    ]);
+
+    expect(loginResponse.status()).toBe(200);
     await page.waitForURL((url) => url.pathname === '/');
 
     // 4. Verify action buttons do NOT exist on dashboard
