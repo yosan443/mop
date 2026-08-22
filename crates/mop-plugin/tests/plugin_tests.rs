@@ -7,10 +7,13 @@ use mop_plugin::host_notification::HostNotificationHandler;
 use mop_plugin::rpc::UnixRpcClient;
 use mop_plugin::supervisor::PluginSupervisor;
 use mop_plugin_sdk::*;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_unix_rpc_client_and_timeout() {
@@ -61,8 +64,9 @@ async fn test_host_notification_anti_spoofing() {
 
     let job_service = JobService::new(pool.clone());
     let host_sock = tmp.path().join("host.sock");
+    let pid_to_plugin = Arc::new(RwLock::new(HashMap::new()));
 
-    let handler = HostNotificationHandler::new(job_service.clone(), &host_sock);
+    let handler = HostNotificationHandler::new(job_service.clone(), &host_sock, pid_to_plugin);
 
     // Create a legitimate job owned by "mop.hello"
     let legitimate_job = job_service
@@ -203,4 +207,110 @@ jobs = ["hello.ping"]
     let disabled = supervisor.disable_plugin("mop.hello").await.unwrap();
     assert!(!disabled.enabled);
     assert_eq!(disabled.state, PluginState::Disabled);
+}
+
+#[tokio::test]
+async fn test_crash_limit_auto_disable() {
+    let tmp = tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    let run_dir = tmp.path().join("run");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    std::fs::create_dir_all(&run_dir).unwrap();
+
+    let db_path = tmp.path().join("test.db");
+    let pool = create_sqlite_pool(&db_path).await.unwrap();
+    run_migrations(&pool).await.unwrap();
+
+    let plugin_repo = PluginRepo::new(pool.clone());
+    let perms_repo = PluginPermissionsRepo::new(pool.clone());
+    let settings_repo = PluginSettingsRepo::new(pool.clone());
+    let job_service = JobService::new(pool.clone());
+
+    // Create a plugin that starts up, responds to initialize, and then immediately crashes
+    let crash_dir = plugins_dir.join("mop.crasher").join("0.1.0");
+    std::fs::create_dir_all(&crash_dir).unwrap();
+
+    let script_path = crash_dir.join("crasher.py");
+    let script_content = r#"#!/usr/bin/env python3
+import os, sys, socket, json, time
+
+sock_path = os.environ.get("MOP_PLUGIN_SOCKET")
+if not sock_path:
+    sys.exit(1)
+
+if os.path.exists(sock_path):
+    os.remove(sock_path)
+
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sock_path)
+s.listen(1)
+
+try:
+    conn, _ = s.accept()
+    line = conn.recv(1024).decode('utf-8')
+    if line:
+        req = json.loads(line.strip())
+        res = {"jsonrpc": "2.0", "result": {"status": "ok"}, "id": req.get("id", 1)}
+        conn.sendall((json.dumps(res) + "\n").encode('utf-8'))
+        time.sleep(0.1)
+        conn.close()
+finally:
+    s.close()
+
+# Exit with error to simulate crash
+sys.exit(1)
+"#;
+    std::fs::write(&script_path, script_content).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let manifest_toml = r#"
+id = "mop.crasher"
+name = "Crasher Plugin"
+version = "0.1.0"
+api_version = "1"
+
+[backend]
+exec = "crasher.py"
+
+[capabilities]
+"#;
+    std::fs::write(crash_dir.join("plugin.toml"), manifest_toml).unwrap();
+
+    // Set crash limit to 3 crashes within 10 seconds
+    let supervisor = PluginSupervisor::new(
+        &plugins_dir,
+        &run_dir,
+        plugin_repo.clone(),
+        perms_repo.clone(),
+        settings_repo.clone(),
+        job_service,
+    )
+    .with_crash_policy(3, 10);
+
+    let _ = supervisor.scan_and_register_plugins().await.unwrap();
+
+    // Enable plugin -> process starts, initializes, and crashes repeatedly
+    let enabled_res = supervisor.enable_plugin("mop.crasher", "admin").await;
+    assert!(enabled_res.is_ok(), "Initial enable should succeed");
+
+    // Wait and verify that supervisor detects repeated crashes and automatically transitions to Disabled
+    let mut auto_disabled = false;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if let Some(record) = plugin_repo.find_by_id("mop.crasher").await.unwrap() {
+            if record.state == PluginState::Disabled && !record.enabled {
+                auto_disabled = true;
+                break;
+            }
+        }
+    }
+
+    assert!(
+        auto_disabled,
+        "Plugin should have been automatically disabled after reaching crash limit"
+    );
 }

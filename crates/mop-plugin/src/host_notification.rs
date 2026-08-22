@@ -2,32 +2,52 @@ use mop_core::error::AppError;
 use mop_core::models::JobStatus;
 use mop_jobs::JobService;
 use mop_plugin_sdk::{JobFinishedParams, JobLogParams, JobProgressParams, RpcNotification};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixListener;
-use tracing::{debug, error, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
-/// Handler for receiving notifications from plugins (Plugin -> Host via Unix socket)
+/// Handler for receiving notifications from plugins (Plugin -> Host via single Unix socket)
 #[derive(Clone)]
 pub struct HostNotificationHandler {
     job_service: JobService,
     socket_path: PathBuf,
+    pid_to_plugin: Arc<RwLock<HashMap<u32, String>>>,
     event_seq: Arc<AtomicI64>,
 }
 
 impl HostNotificationHandler {
-    pub fn new(job_service: JobService, socket_path: impl Into<PathBuf>) -> Self {
+    pub fn new(
+        job_service: JobService,
+        socket_path: impl Into<PathBuf>,
+        pid_to_plugin: Arc<RwLock<HashMap<u32, String>>>,
+    ) -> Self {
         Self {
             job_service,
             socket_path: socket_path.into(),
+            pid_to_plugin,
             event_seq: Arc::new(AtomicI64::new(1)),
         }
     }
 
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+
+    /// Register a plugin PID for SO_PEERCRED lookups
+    pub async fn register_plugin_pid(&self, pid: u32, plugin_id: &str) {
+        let mut map = self.pid_to_plugin.write().await;
+        map.insert(pid, plugin_id.to_string());
+    }
+
+    /// Unregister a plugin PID
+    pub async fn unregister_plugin_pid(&self, pid: u32) {
+        let mut map = self.pid_to_plugin.write().await;
+        map.remove(&pid);
     }
 
     /// Process a single incoming notification with strict job_id/plugin_id verification
@@ -178,11 +198,9 @@ impl HostNotificationHandler {
         }
     }
 
-    /// Start listening on host.sock for plugin notifications
-    pub async fn start_listener(
-        &self,
-        sender_plugin_id: &str,
-    ) -> Result<tokio::task::JoinHandle<()>, AppError> {
+    /// Start a single host-wide listener on host.sock
+    /// Inbound connections are verified via SO_PEERCRED against supervisor's pid_to_plugin table.
+    pub async fn start_host_listener(&self) -> Result<tokio::task::JoinHandle<()>, AppError> {
         if self.socket_path.exists() {
             let _ = std::fs::remove_file(&self.socket_path);
         }
@@ -205,24 +223,53 @@ impl HostNotificationHandler {
                 std::fs::set_permissions(&self.socket_path, std::fs::Permissions::from_mode(0o660));
         }
 
+        info!(
+            "Host notification listener active on {}",
+            self.socket_path.display()
+        );
+
         let handler = self.clone();
-        let plugin_id = sender_plugin_id.to_string();
 
         let handle = tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let h = handler.clone();
-                        let pid = plugin_id.clone();
                         tokio::spawn(async move {
+                            // Extract peer PID via SO_PEERCRED
+                            let peer_pid = match stream.peer_cred() {
+                                Ok(ucred) => ucred.pid().map(|p| p as u32),
+                                Err(e) => {
+                                    warn!("Failed to get peer credentials from plugin socket: {e}");
+                                    None
+                                }
+                            };
+
+                            let sender_plugin_id = if let Some(pid) = peer_pid {
+                                let map = h.pid_to_plugin.read().await;
+                                map.get(&pid).cloned()
+                            } else {
+                                None
+                            };
+
+                            let Some(sender_plugin_id) = sender_plugin_id else {
+                                warn!(
+                                    "Security check failed: rejected connection on host.sock from unregistered peer PID {:?}",
+                                    peer_pid
+                                );
+                                return;
+                            };
+
                             let mut lines = BufReader::new(stream).lines();
                             while let Ok(Some(line)) = lines.next_line().await {
                                 if line.trim().is_empty() {
                                     continue;
                                 }
                                 if let Ok(notif) = serde_json::from_str::<RpcNotification>(&line) {
-                                    if let Err(e) = h.handle_notification(&pid, notif).await {
-                                        error!("Error handling notification from {pid}: {e}");
+                                    if let Err(e) =
+                                        h.handle_notification(&sender_plugin_id, notif).await
+                                    {
+                                        error!("Error handling notification from {sender_plugin_id}: {e}");
                                     }
                                 }
                             }
