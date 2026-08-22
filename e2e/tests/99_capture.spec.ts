@@ -44,15 +44,17 @@ test.describe('Visual Verification & Screenshot Capture (M3)', () => {
 
     // 4. Open Confirm Action Modal on Compose Project (shows managed & unmanaged containers)
     await page.click('#btn-restart-compose_project-media-stack');
-    await page.waitForTimeout(200);
+    await page.locator('.modal-content').waitFor({ state: 'visible' });
+    await page.locator('#compose-scope-box').waitFor({ state: 'visible' });
     await page.screenshot({ path: path.join(TARGET_DIR, '03_confirm_action_modal.png'), fullPage: true });
     await page.click('#btn-cancel-action');
+    await page.locator('.modal-content').waitFor({ state: 'hidden' });
 
     // 5. Navigate to Compose Service Detail View (with depends_on, containers, and live logs)
     await page.click('#btn-detail-compose_service-media-stack-manga-worker');
     await page.waitForURL((url) => url.pathname.includes('/resources/compose_service:media-stack:manga-worker') || url.pathname.includes('/resources/compose_service%3Amedia-stack%3Amanga-worker'));
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
+    await page.locator('#log-terminal-container').waitFor({ state: 'visible' });
     await page.screenshot({ path: path.join(TARGET_DIR, '04_resource_detail_logs.png'), fullPage: true });
 
     // 6. Capture User Management view
