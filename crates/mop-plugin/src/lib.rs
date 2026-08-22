@@ -1,19 +1,8 @@
-use mop_core::error::AppError;
+pub mod host_notification;
+pub mod rpc;
+pub mod supervisor;
+
+pub use host_notification::HostNotificationHandler;
 pub use mop_plugin_sdk::*;
-use std::path::Path;
-
-pub struct PluginSupervisor;
-
-impl PluginSupervisor {
-    pub fn parse_manifest(path: &Path) -> Result<PluginManifest, AppError> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            AppError::Plugin(format!(
-                "Failed to read plugin.toml at {}: {e}",
-                path.display()
-            ))
-        })?;
-        let manifest: PluginManifest = toml::from_str(&content)
-            .map_err(|e| AppError::Plugin(format!("Failed to parse plugin manifest: {e}")))?;
-        Ok(manifest)
-    }
-}
+pub use rpc::{UnixRpcClient, DEFAULT_RPC_TIMEOUT};
+pub use supervisor::{PluginSupervisor, DEFAULT_CRASH_LIMIT, DEFAULT_CRASH_WINDOW};
