@@ -31,7 +31,7 @@ impl FakeResourceCollector {
                 kind: ResourceKind::SystemdUnit,
                 name: "caddy.service".to_string(),
                 display_name: Some("Caddy Web Server".to_string()),
-                group_name: Some("Web".to_string()),
+                group_name: Some("Systemd".to_string()),
                 source: "allowlist".to_string(),
                 labels_json: None,
                 first_seen: now,
@@ -42,7 +42,7 @@ impl FakeResourceCollector {
                 kind: ResourceKind::SystemdUnit,
                 name: "nginx.service".to_string(),
                 display_name: Some("Nginx Reverse Proxy".to_string()),
-                group_name: Some("Web".to_string()),
+                group_name: Some("Systemd".to_string()),
                 source: "allowlist".to_string(),
                 labels_json: None,
                 first_seen: now,
@@ -53,9 +53,110 @@ impl FakeResourceCollector {
                 kind: ResourceKind::DockerContainer,
                 name: "komga".to_string(),
                 display_name: Some("Komga Media Server".to_string()),
-                group_name: Some("Media".to_string()),
+                group_name: Some("Docker".to_string()),
                 source: "label".to_string(),
-                labels_json: Some(r#"{"mop.managed":"true","mop.group":"Media"}"#.to_string()),
+                labels_json: Some(r#"{"mop.managed":"true","mop.group":"Docker"}"#.to_string()),
+                first_seen: now,
+                last_seen: now,
+            },
+            // M3 Compose Resources: media-stack project
+            Resource {
+                id: "compose_project:media-stack".to_string(),
+                kind: ResourceKind::ComposeProject,
+                name: "media-stack".to_string(),
+                display_name: Some("media-stack".to_string()),
+                group_name: Some("Docker Compose".to_string()),
+                source: "compose".to_string(),
+                labels_json: Some(
+                    serde_json::json!({
+                        "type": "compose_project",
+                        "project": "media-stack",
+                        "containers_count": 2,
+                        "managed_containers_count": 1,
+                    })
+                    .to_string(),
+                ),
+                first_seen: now,
+                last_seen: now,
+            },
+            Resource {
+                id: "compose_service:media-stack:manga-worker".to_string(),
+                kind: ResourceKind::ComposeService,
+                name: "manga-worker".to_string(),
+                display_name: Some("media-stack / manga-worker".to_string()),
+                group_name: Some("media-stack".to_string()),
+                source: "compose".to_string(),
+                labels_json: Some(
+                    serde_json::json!({
+                        "type": "compose_service",
+                        "project": "media-stack",
+                        "service": "manga-worker",
+                        "depends_on": ["db"],
+                        "containers_count": 1,
+                        "mop.managed": "true",
+                    })
+                    .to_string(),
+                ),
+                first_seen: now,
+                last_seen: now,
+            },
+            Resource {
+                id: "compose_service:media-stack:db".to_string(),
+                kind: ResourceKind::ComposeService,
+                name: "db".to_string(),
+                display_name: Some("media-stack / db".to_string()),
+                group_name: Some("media-stack".to_string()),
+                source: "compose".to_string(),
+                labels_json: Some(
+                    serde_json::json!({
+                        "type": "compose_service",
+                        "project": "media-stack",
+                        "service": "db",
+                        "depends_on": [],
+                        "containers_count": 1,
+                        "mop.managed": "false",
+                    })
+                    .to_string(),
+                ),
+                first_seen: now,
+                last_seen: now,
+            },
+            Resource {
+                id: "docker:media-stack-manga-worker-1".to_string(),
+                kind: ResourceKind::DockerContainer,
+                name: "media-stack-manga-worker-1".to_string(),
+                display_name: Some("media-stack-manga-worker-1".to_string()),
+                group_name: Some("media-stack".to_string()),
+                source: "compose".to_string(),
+                labels_json: Some(
+                    serde_json::json!({
+                        "com.docker.compose.project": "media-stack",
+                        "com.docker.compose.service": "manga-worker",
+                        "com.docker.compose.container-number": "1",
+                        "com.docker.compose.depends_on": "db",
+                        "mop.managed": "true",
+                    })
+                    .to_string(),
+                ),
+                first_seen: now,
+                last_seen: now,
+            },
+            Resource {
+                id: "docker:media-stack-db-1".to_string(),
+                kind: ResourceKind::DockerContainer,
+                name: "media-stack-db-1".to_string(),
+                display_name: Some("media-stack-db-1".to_string()),
+                group_name: Some("media-stack".to_string()),
+                source: "compose".to_string(),
+                labels_json: Some(
+                    serde_json::json!({
+                        "com.docker.compose.project": "media-stack",
+                        "com.docker.compose.service": "db",
+                        "com.docker.compose.container-number": "1",
+                        "mop.managed": "false",
+                    })
+                    .to_string(),
+                ),
                 first_seen: now,
                 last_seen: now,
             },
@@ -65,6 +166,26 @@ impl FakeResourceCollector {
         statuses.insert("systemd:caddy.service".to_string(), ResourceStatus::Running);
         statuses.insert("systemd:nginx.service".to_string(), ResourceStatus::Stopped);
         statuses.insert("docker:komga".to_string(), ResourceStatus::Running);
+        statuses.insert(
+            "compose_project:media-stack".to_string(),
+            ResourceStatus::Running,
+        );
+        statuses.insert(
+            "compose_service:media-stack:manga-worker".to_string(),
+            ResourceStatus::Running,
+        );
+        statuses.insert(
+            "compose_service:media-stack:db".to_string(),
+            ResourceStatus::Running,
+        );
+        statuses.insert(
+            "docker:media-stack-manga-worker-1".to_string(),
+            ResourceStatus::Running,
+        );
+        statuses.insert(
+            "docker:media-stack-db-1".to_string(),
+            ResourceStatus::Running,
+        );
 
         let mut log_buffers = HashMap::new();
         for r in &resources {
@@ -121,12 +242,13 @@ impl FakeResourceCollector {
                 seq += 1;
                 let now = Utc::now();
 
-                let (caddy_buf, _nginx_buf, komga_buf) = {
+                let (caddy_buf, _nginx_buf, komga_buf, worker_buf) = {
                     let map = buffers.read().await;
                     (
                         map.get("systemd:caddy.service").cloned(),
                         map.get("systemd:nginx.service").cloned(),
                         map.get("docker:komga").cloned(),
+                        map.get("compose_service:media-stack:manga-worker").cloned(),
                     )
                 };
 
@@ -137,6 +259,11 @@ impl FakeResourceCollector {
                 let is_komga_running = {
                     let st = statuses.read().await;
                     st.get("docker:komga") == Some(&ResourceStatus::Running)
+                };
+                let is_worker_running = {
+                    let st = statuses.read().await;
+                    st.get("compose_service:media-stack:manga-worker")
+                        == Some(&ResourceStatus::Running)
                 };
 
                 if is_caddy_running {
@@ -160,6 +287,19 @@ impl FakeResourceCollector {
                             stream: "stdout".to_string(),
                             line: format!(
                                 "[INFO] Library scan completed: 42 books verified (seq={seq})"
+                            ),
+                        })
+                        .await;
+                    }
+                }
+
+                if is_worker_running {
+                    if let Some(buf) = worker_buf {
+                        buf.push(LogLine {
+                            ts: now,
+                            stream: "stdout".to_string(),
+                            line: format!(
+                                "[manga-worker-1] [INFO] Watching inbox queue for incoming archives (seq={seq})"
                             ),
                         })
                         .await;
@@ -230,6 +370,75 @@ impl ResourceCollector for FakeResourceCollector {
         since: Option<DateTime<Utc>>,
     ) -> Result<Vec<LogLine>, AppError> {
         let map = self.log_buffers.read().await;
+
+        if id == "compose_service:media-stack:manga-worker" {
+            let mut merged = Vec::new();
+            if let Some(buf) = map.get("docker:media-stack-manga-worker-1") {
+                let lines = buf.get_snapshot(tail, since).await;
+                for line in lines {
+                    let prefix = "[manga-worker|media-stack-manga-worker-1]";
+                    let line_content = if line.line.starts_with(prefix) {
+                        line.line
+                    } else {
+                        format!("{prefix} {}", line.line)
+                    };
+                    merged.push(LogLine {
+                        ts: line.ts,
+                        stream: line.stream,
+                        line: line_content,
+                    });
+                }
+            }
+            if let Some(buf) = map.get(id) {
+                merged.extend(buf.get_snapshot(tail, since).await);
+            }
+            merged.sort_by_key(|l| l.ts);
+            if merged.len() > tail {
+                let start = merged.len() - tail;
+                merged = merged[start..].to_vec();
+            }
+            return Ok(merged);
+        }
+
+        if id == "compose_project:media-stack" {
+            let mut merged = Vec::new();
+            let children = [
+                (
+                    "manga-worker",
+                    "docker:media-stack-manga-worker-1",
+                    "media-stack-manga-worker-1",
+                ),
+                ("db", "docker:media-stack-db-1", "media-stack-db-1"),
+            ];
+            for (svc, cont_id, cont_name) in children {
+                if let Some(buf) = map.get(cont_id) {
+                    let lines = buf.get_snapshot(tail, since).await;
+                    for line in lines {
+                        let prefix = format!("[{svc}|{cont_name}]");
+                        let line_content = if line.line.starts_with(&prefix) {
+                            line.line
+                        } else {
+                            format!("{prefix} {}", line.line)
+                        };
+                        merged.push(LogLine {
+                            ts: line.ts,
+                            stream: line.stream,
+                            line: line_content,
+                        });
+                    }
+                }
+            }
+            if let Some(buf) = map.get(id) {
+                merged.extend(buf.get_snapshot(tail, since).await);
+            }
+            merged.sort_by_key(|l| l.ts);
+            if merged.len() > tail {
+                let start = merged.len() - tail;
+                merged = merged[start..].to_vec();
+            }
+            return Ok(merged);
+        }
+
         let Some(buf) = map.get(id) else {
             return Err(AppError::ResourceNotFound(id.to_string()));
         };
@@ -243,6 +452,67 @@ impl ResourceCollector for FakeResourceCollector {
         _since: Option<DateTime<Utc>>,
     ) -> Result<broadcast::Receiver<LogLine>, AppError> {
         let map = self.log_buffers.read().await;
+
+        if id == "compose_service:media-stack:manga-worker" {
+            let (tx, rx) = broadcast::channel(512);
+            if let Some(buf) = map.get("docker:media-stack-manga-worker-1") {
+                let mut child_rx = buf.subscribe();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    while let Ok(line) = child_rx.recv().await {
+                        let prefix = "[manga-worker|media-stack-manga-worker-1]";
+                        let line_content = if line.line.starts_with(prefix) {
+                            line.line
+                        } else {
+                            format!("{prefix} {}", line.line)
+                        };
+                        let _ = tx_clone.send(LogLine {
+                            ts: line.ts,
+                            stream: line.stream,
+                            line: line_content,
+                        });
+                    }
+                });
+            }
+            return Ok(rx);
+        }
+
+        if id == "compose_project:media-stack" {
+            let (tx, rx) = broadcast::channel(512);
+            let children = [
+                (
+                    "manga-worker",
+                    "docker:media-stack-manga-worker-1",
+                    "media-stack-manga-worker-1",
+                ),
+                ("db", "docker:media-stack-db-1", "media-stack-db-1"),
+            ];
+            for (svc, cont_id, cont_name) in children {
+                if let Some(buf) = map.get(cont_id) {
+                    let mut child_rx = buf.subscribe();
+                    let tx_clone = tx.clone();
+                    let svc_str = svc.to_string();
+                    let cont_str = cont_name.to_string();
+                    tokio::spawn(async move {
+                        while let Ok(line) = child_rx.recv().await {
+                            let prefix = format!("[{svc_str}|{cont_str}]");
+                            let line_content = if line.line.starts_with(&prefix) {
+                                line.line
+                            } else {
+                                format!("{prefix} {}", line.line)
+                            };
+                            let _ = tx_clone.send(LogLine {
+                                ts: line.ts,
+                                stream: line.stream,
+                                line: line_content,
+                            });
+                        }
+                    });
+                }
+            }
+            return Ok(rx);
+        }
+
         let Some(buf) = map.get(id) else {
             return Err(AppError::ResourceNotFound(id.to_string()));
         };
@@ -258,8 +528,20 @@ impl ResourceCollector for FakeResourceCollector {
             }
         }
 
+        // Unmanaged service or container protection (SPEC §9.3 & 不変条件 3)
+        if id == "compose_service:media-stack:db" || id == "docker:media-stack-db-1" {
+            return Err(AppError::ActionNotAllowed(
+                action.to_string(),
+                format!("{id} has no managed containers (mop.managed=true required)"),
+            ));
+        }
+
         let kind = if id.starts_with("systemd:") {
             ResourceKind::SystemdUnit
+        } else if id.starts_with("compose_project:") {
+            ResourceKind::ComposeProject
+        } else if id.starts_with("compose_service:") {
+            ResourceKind::ComposeService
         } else {
             ResourceKind::DockerContainer
         };
@@ -275,7 +557,25 @@ impl ResourceCollector for FakeResourceCollector {
                 {
                     let mut write = self.statuses.write().await;
                     write.insert(id.to_string(), ResourceStatus::Restarting);
+
+                    // If restarting compose_project or compose_service, also update managed child containers
+                    if id == "compose_project:media-stack" {
+                        write.insert(
+                            "compose_service:media-stack:manga-worker".to_string(),
+                            ResourceStatus::Restarting,
+                        );
+                        write.insert(
+                            "docker:media-stack-manga-worker-1".to_string(),
+                            ResourceStatus::Restarting,
+                        );
+                    } else if id == "compose_service:media-stack:manga-worker" {
+                        write.insert(
+                            "docker:media-stack-manga-worker-1".to_string(),
+                            ResourceStatus::Restarting,
+                        );
+                    }
                 }
+
                 let _ = self.event_tx.send(ResourceEvent {
                     id: id.to_string(),
                     kind,
@@ -283,6 +583,35 @@ impl ResourceCollector for FakeResourceCollector {
                     ts: Utc::now(),
                     message: Some(format!("Resource {id} is restarting")),
                 });
+
+                if id == "compose_project:media-stack" {
+                    let _ = self.event_tx.send(ResourceEvent {
+                        id: "compose_service:media-stack:manga-worker".to_string(),
+                        kind: ResourceKind::ComposeService,
+                        status: ResourceStatus::Restarting,
+                        ts: Utc::now(),
+                        message: Some("Service manga-worker is restarting".to_string()),
+                    });
+                    let _ = self.event_tx.send(ResourceEvent {
+                        id: "docker:media-stack-manga-worker-1".to_string(),
+                        kind: ResourceKind::DockerContainer,
+                        status: ResourceStatus::Restarting,
+                        ts: Utc::now(),
+                        message: Some(
+                            "Container media-stack-manga-worker-1 is restarting".to_string(),
+                        ),
+                    });
+                } else if id == "compose_service:media-stack:manga-worker" {
+                    let _ = self.event_tx.send(ResourceEvent {
+                        id: "docker:media-stack-manga-worker-1".to_string(),
+                        kind: ResourceKind::DockerContainer,
+                        status: ResourceStatus::Restarting,
+                        ts: Utc::now(),
+                        message: Some(
+                            "Container media-stack-manga-worker-1 is restarting".to_string(),
+                        ),
+                    });
+                }
 
                 // Spawn transition back to running after 400ms
                 let statuses = self.statuses.clone();
@@ -293,7 +622,23 @@ impl ResourceCollector for FakeResourceCollector {
                     {
                         let mut write = statuses.write().await;
                         write.insert(id_clone.clone(), ResourceStatus::Running);
+                        if id_clone == "compose_project:media-stack" {
+                            write.insert(
+                                "compose_service:media-stack:manga-worker".to_string(),
+                                ResourceStatus::Running,
+                            );
+                            write.insert(
+                                "docker:media-stack-manga-worker-1".to_string(),
+                                ResourceStatus::Running,
+                            );
+                        } else if id_clone == "compose_service:media-stack:manga-worker" {
+                            write.insert(
+                                "docker:media-stack-manga-worker-1".to_string(),
+                                ResourceStatus::Running,
+                            );
+                        }
                     }
+
                     let _ = event_tx.send(ResourceEvent {
                         id: id_clone.clone(),
                         kind,
@@ -301,6 +646,39 @@ impl ResourceCollector for FakeResourceCollector {
                         ts: Utc::now(),
                         message: Some(format!("Resource {id_clone} restarted successfully")),
                     });
+
+                    if id_clone == "compose_project:media-stack" {
+                        let _ = event_tx.send(ResourceEvent {
+                            id: "compose_service:media-stack:manga-worker".to_string(),
+                            kind: ResourceKind::ComposeService,
+                            status: ResourceStatus::Running,
+                            ts: Utc::now(),
+                            message: Some(
+                                "Service manga-worker restarted successfully".to_string(),
+                            ),
+                        });
+                        let _ = event_tx.send(ResourceEvent {
+                            id: "docker:media-stack-manga-worker-1".to_string(),
+                            kind: ResourceKind::DockerContainer,
+                            status: ResourceStatus::Running,
+                            ts: Utc::now(),
+                            message: Some(
+                                "Container media-stack-manga-worker-1 restarted successfully"
+                                    .to_string(),
+                            ),
+                        });
+                    } else if id_clone == "compose_service:media-stack:manga-worker" {
+                        let _ = event_tx.send(ResourceEvent {
+                            id: "docker:media-stack-manga-worker-1".to_string(),
+                            kind: ResourceKind::DockerContainer,
+                            status: ResourceStatus::Running,
+                            ts: Utc::now(),
+                            message: Some(
+                                "Container media-stack-manga-worker-1 restarted successfully"
+                                    .to_string(),
+                            ),
+                        });
+                    }
                 });
 
                 return Ok(());

@@ -1,7 +1,9 @@
+use crate::compose::ComposeCollector;
 use crate::docker::DockerCollector;
 use crate::systemd::SystemdCollector;
 use crate::traits::{LogLine, ResourceCollector, ResourceDetail, ResourceEvent};
 use async_trait::async_trait;
+use bollard::Docker;
 use chrono::{DateTime, Utc};
 use mop_core::config::ResourcesConfig;
 use mop_core::error::AppError;
@@ -11,6 +13,7 @@ use tokio::sync::broadcast;
 pub struct CompositeCollector {
     systemd: SystemdCollector,
     docker: DockerCollector,
+    compose: ComposeCollector,
     event_tx: broadcast::Sender<ResourceEvent>,
 }
 
@@ -20,9 +23,13 @@ impl CompositeCollector {
         let systemd = SystemdCollector::new(config.systemd, event_tx.clone()).await?;
         let docker = DockerCollector::new(config.docker, event_tx.clone()).await?;
 
+        let docker_client = Docker::connect_with_local_defaults().ok();
+        let compose = ComposeCollector::new(docker_client, event_tx.clone(), docker.log_buffers());
+
         Ok(Self {
             systemd,
             docker,
+            compose,
             event_tx,
         })
     }
@@ -38,6 +45,9 @@ impl ResourceCollector for CompositeCollector {
         if let Ok(dock_res) = self.docker.list_resources().await {
             all.extend(dock_res);
         }
+        if let Ok(comp_res) = self.compose.list_resources().await {
+            all.extend(comp_res);
+        }
         Ok(all)
     }
 
@@ -46,6 +56,8 @@ impl ResourceCollector for CompositeCollector {
             self.systemd.get_resource_detail(id).await
         } else if id.starts_with("docker:") {
             self.docker.get_resource_detail(id).await
+        } else if id.starts_with("compose_project:") || id.starts_with("compose_service:") {
+            self.compose.get_resource_detail(id).await
         } else {
             Ok(None)
         }
@@ -61,6 +73,8 @@ impl ResourceCollector for CompositeCollector {
             self.systemd.get_logs(id, tail, since).await
         } else if id.starts_with("docker:") {
             self.docker.get_logs(id, tail, since).await
+        } else if id.starts_with("compose_project:") || id.starts_with("compose_service:") {
+            self.compose.get_logs(id, tail, since).await
         } else {
             Err(AppError::ResourceNotFound(id.to_string()))
         }
@@ -75,6 +89,8 @@ impl ResourceCollector for CompositeCollector {
             self.systemd.subscribe_logs(id, since).await
         } else if id.starts_with("docker:") {
             self.docker.subscribe_logs(id, since).await
+        } else if id.starts_with("compose_project:") || id.starts_with("compose_service:") {
+            self.compose.subscribe_logs(id, since).await
         } else {
             Err(AppError::ResourceNotFound(id.to_string()))
         }
@@ -85,6 +101,8 @@ impl ResourceCollector for CompositeCollector {
             self.systemd.execute_action(id, action).await
         } else if id.starts_with("docker:") {
             self.docker.execute_action(id, action).await
+        } else if id.starts_with("compose_project:") || id.starts_with("compose_service:") {
+            self.compose.execute_action(id, action).await
         } else {
             Err(AppError::ResourceNotFound(id.to_string()))
         }
