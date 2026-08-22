@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 
 test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.55' } });
 
-test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
-  test('displays resource cards, summary statistics, and navigates to detail', async ({ page }) => {
+test.describe('Dashboard Resource Cards & Grouping (M3)', () => {
+  test('displays resource cards, compose project hierarchy, unmanaged badge, and navigates to detail', async ({ page }) => {
     // 1. Initial setup or login
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -26,26 +26,48 @@ test.describe('Dashboard Resource Cards & Grouping (M2)', () => {
     await expect(page.locator('#stat-running')).toHaveText('7');
     await expect(page.locator('#stat-stopped')).toHaveText('1');
 
-    // 3. Verify resource cards exist
+    // 3. Verify Systemd and Docker cards
     const caddyCard = page.locator('#resource-card-systemd-caddy-service');
     await expect(caddyCard).toBeVisible();
     await expect(caddyCard).toContainText('Caddy Web Server');
-
-    const nginxCard = page.locator('#resource-card-systemd-nginx-service');
-    await expect(nginxCard).toBeVisible();
-    await expect(nginxCard).toContainText('Nginx Reverse Proxy');
 
     const komgaCard = page.locator('#resource-card-docker-komga');
     await expect(komgaCard).toBeVisible();
     await expect(komgaCard).toContainText('Komga Media Server');
 
-    // 4. Click detail button on caddy card
-    await page.click('#btn-detail-systemd-caddy-service');
-    await page.waitForURL((url) => url.pathname.includes('/resources/systemd:caddy.service') || url.pathname.includes('/resources/systemd%3Acaddy.service'));
+    // 4. Verify Compose Projects section and hierarchical service display
+    const composeSection = page.locator('#section-compose-projects');
+    await expect(composeSection).toBeVisible();
+    await expect(composeSection).toContainText('Docker Compose Projects');
 
-    // 5. Verify resource detail page
-    await expect(page.locator('#detail-resource-name')).toHaveText('Caddy Web Server');
+    const mediaStackProject = page.locator('#resource-card-compose_project-media-stack');
+    await expect(mediaStackProject).toBeVisible();
+    await expect(mediaStackProject).toContainText('media-stack');
+    await expect(mediaStackProject).toContainText('1/2 managed');
+
+    // Verify services under media-stack
+    const mangaWorkerService = page.locator('#resource-card-compose_service-media-stack-manga-worker');
+    await expect(mangaWorkerService).toBeVisible();
+    await expect(mangaWorkerService).toContainText('manga-worker');
+    await expect(mangaWorkerService).toContainText('depends_on:');
+    await expect(mangaWorkerService).toContainText('db');
+    await expect(mangaWorkerService.locator('#btn-restart-compose_service-media-stack-manga-worker')).toBeVisible();
+
+    const dbService = page.locator('#resource-card-compose_service-media-stack-db');
+    await expect(dbService).toBeVisible();
+    await expect(dbService).toContainText('db');
+    await expect(dbService.locator('#badge-unmanaged-compose_service-media-stack-db')).toBeVisible();
+    await expect(dbService.locator('#btn-restart-compose_service-media-stack-db')).not.toBeVisible();
+
+    // 5. Navigate to compose service detail
+    await page.click('#btn-detail-compose_service-media-stack-manga-worker');
+    await page.waitForURL((url) => url.pathname.includes('/resources/compose_service:media-stack:manga-worker') || url.pathname.includes('/resources/compose_service%3Amedia-stack%3Amanga-worker'));
+
+    // Verify detail page components (depends_on, constituent containers, managed status)
+    await expect(page.locator('#detail-resource-name')).toContainText('manga-worker');
     await expect(page.locator('#detail-status-badge')).toHaveText('running');
-    await expect(page.locator('#metric-uptime')).not.toBeEmpty();
+    await expect(page.locator('#badge-managed-status')).toBeVisible();
+    await expect(page.locator('#row-depends-on')).toContainText('db');
+    await expect(page.locator('#block-containers-list')).toContainText('media-stack-manga-worker-1');
   });
 });
