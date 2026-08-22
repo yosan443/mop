@@ -1620,15 +1620,19 @@ dependencies = [
 name = "mop-plugin"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "mop-core",
  "mop-db",
+ "mop-jobs",
  "mop-plugin-sdk",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "toml",
  "tracing",
+ "zbus",
 ]
 
 [[package]]
@@ -1636,10 +1640,12 @@ name = "mop-plugin-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "toml",
  "tracing",
 ]
 

@@ -58,6 +58,9 @@ test.describe('Docker Compose Project, Services, and Protection E2E (M3)', () =>
     await expect(page.locator('.alert-success')).toBeVisible();
     await expect(page.locator('.alert-success')).toContainText('ジョブを受け付けました');
 
+    // 再起動の完了 (running 復帰・ロック解放) を待機
+    await expect(mangaWorkerCard).toContainText('running', { timeout: 10000 });
+
     // 5. プロジェクト再起動のモーダルで manga-worker のみが対象表示され、再起動後も db の状態が変わらないこと
     await page.click('#btn-restart-compose_project-media-stack');
     const projectModal = page.locator('.modal-content');
@@ -72,7 +75,8 @@ test.describe('Docker Compose Project, Services, and Protection E2E (M3)', () =>
 
     await page.click('#btn-confirm-action');
     await expect(projectModal).not.toBeVisible();
-    await expect(page.locator('.alert-success')).toBeVisible();
+    await expect(page.locator('.alert-success')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.alert-success')).toContainText('ジョブを受け付けました');
 
     // db サービスの状態が running のままであることを確認
     await expect(dbCard).toContainText('running');
