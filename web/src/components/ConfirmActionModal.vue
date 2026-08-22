@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 const props = defineProps<{
   resourceId: string;
   resourceName: string;
   action: 'start' | 'stop' | 'restart';
+  labelsJson?: string;
 }>();
 
 const emit = defineEmits<{
@@ -33,6 +34,32 @@ function actionDescription(action: string) {
   }
 }
 
+interface ContainerInfo {
+  name: string;
+  service?: string;
+  status?: string;
+  is_managed: boolean;
+}
+
+const parsedContainers = computed<ContainerInfo[]>(() => {
+  if (!props.labelsJson) return [];
+  try {
+    const val = JSON.parse(props.labelsJson);
+    if (Array.isArray(val.containers)) {
+      return val.containers;
+    }
+  } catch {}
+  return [];
+});
+
+const managedContainers = computed(() => {
+  return parsedContainers.value.filter(c => c.is_managed);
+});
+
+const unmanagedContainers = computed(() => {
+  return parsedContainers.value.filter(c => !c.is_managed);
+});
+
 async function handleConfirm() {
   loading.value = true;
   error.value = null;
@@ -59,6 +86,42 @@ async function handleConfirm() {
           <div class="target-row">
             <span class="target-label">対象名:</span>
             <span class="target-val font-semibold">{{ resourceName }}</span>
+          </div>
+        </div>
+
+        <!-- Compose Container Scope Detail (SPEC §9.3 & 不変条件 §19) -->
+        <div v-if="parsedContainers.length > 0" class="compose-scope-box" id="compose-scope-box">
+          <h4 class="scope-title">Compose 操作スコープ (構成コンテナ)</h4>
+
+          <!-- Managed containers (Action Target) -->
+          <div class="scope-group managed-scope" id="scope-managed-containers">
+            <div class="scope-header">
+              <span class="scope-icon">🎯</span>
+              <strong>再起動される管理対象コンテナ ({{ managedContainers.length }}):</strong>
+            </div>
+            <ul class="container-list">
+              <li v-for="c in managedContainers" :key="c.name" class="container-item managed-item">
+                <span class="badge badge-success-sm">managed</span>
+                <span class="container-name font-mono">{{ c.name }}</span>
+                <span v-if="c.service" class="service-tag">({{ c.service }})</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- Unmanaged containers (Protected & Excluded) -->
+          <div v-if="unmanagedContainers.length > 0" class="scope-group unmanaged-scope" id="scope-unmanaged-containers">
+            <div class="scope-header">
+              <span class="scope-icon">🛡️</span>
+              <strong>除外される未管理コンテナ (変更なし - {{ unmanagedContainers.length }}):</strong>
+            </div>
+            <ul class="container-list">
+              <li v-for="c in unmanagedContainers" :key="c.name" class="container-item unmanaged-item">
+                <span class="badge badge-neutral-sm">unmanaged</span>
+                <span class="container-name font-mono">{{ c.name }}</span>
+                <span v-if="c.service" class="service-tag">({{ c.service }})</span>
+              </li>
+            </ul>
+            <p class="scope-note">※ <code>mop.managed=true</code> が付与されていないコンテナは保護され、変更されません。</p>
           </div>
         </div>
 
@@ -111,12 +174,15 @@ async function handleConfirm() {
 
 .modal-content {
   width: 100%;
-  max-width: 480px;
+  max-width: 520px;
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
   overflow: hidden;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
@@ -155,6 +221,7 @@ async function handleConfirm() {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+  overflow-y: auto;
 }
 
 .confirm-message {
@@ -190,8 +257,89 @@ async function handleConfirm() {
   color: var(--color-text-primary);
 }
 
+.compose-scope-box {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.scope-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.scope-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.scope-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--color-text-primary);
+}
+
+.container-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-left: 1.5rem;
+}
+
+.container-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.badge-success-sm {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 4px;
+}
+
+.badge-neutral-sm {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+}
+
+.service-tag {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.scope-note {
+  margin: 0.3rem 0 0 1.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
 .font-semibold {
   font-weight: 600;
+}
+
+.font-mono {
+  font-family: monospace;
 }
 
 .modal-footer {

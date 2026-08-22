@@ -16,40 +16,41 @@ if (!fs.existsSync(TARGET_DIR)) {
 
 test.use({ extraHTTPHeaders: { 'x-forwarded-for': '10.0.0.99' } });
 
-test.describe('Visual Verification & Screenshot Capture (M2)', () => {
+test.describe('Visual Verification & Screenshot Capture (M3)', () => {
   test('captures key UI views for walkthrough', async ({ page }) => {
     // 1. Setup view (if not yet setup, or fresh)
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.screenshot({ path: path.join(TARGET_DIR, '01_setup_view.png'), fullPage: true });
 
     // 2. Perform setup if on /setup
     if (page.url().includes('/setup')) {
+      await page.screenshot({ path: path.join(TARGET_DIR, '01_setup_view.png'), fullPage: true });
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.fill('#confirmPassword', 'AdminSecretPassword123!');
       await page.click('#btn-submit-setup');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     } else if (page.url().includes('/login')) {
+      await page.screenshot({ path: path.join(TARGET_DIR, '01_setup_view.png'), fullPage: true });
       await page.fill('#username', 'admin');
       await page.fill('#password', 'AdminSecretPassword123!');
       await page.click('#btn-submit-login');
-      await page.waitForURL('http://127.0.0.1:18999/');
+      await page.waitForURL((url) => url.pathname === '/');
     }
 
     await page.waitForLoadState('networkidle');
-    // 3. Capture Dashboard view with Resource Cards & Summary
+    // 3. Capture Dashboard view with Compose Projects Hierarchy & Unmanaged Badges
     await page.screenshot({ path: path.join(TARGET_DIR, '02_dashboard_view.png'), fullPage: true });
 
-    // 4. Open Confirm Action Modal on Caddy
-    await page.click('#btn-restart-systemd-caddy-service');
+    // 4. Open Confirm Action Modal on Compose Project (shows managed & unmanaged containers)
+    await page.click('#btn-restart-compose_project-media-stack');
     await page.waitForTimeout(200);
     await page.screenshot({ path: path.join(TARGET_DIR, '03_confirm_action_modal.png'), fullPage: true });
     await page.click('#btn-cancel-action');
 
-    // 5. Navigate to Resource Detail View (with Live Log Viewer)
-    await page.click('#btn-detail-systemd-caddy-service');
-    await page.waitForURL(/.*\/resources\/systemd%3Acaddy\.service/);
+    // 5. Navigate to Compose Service Detail View (with depends_on, containers, and live logs)
+    await page.click('#btn-detail-compose_service-media-stack-manga-worker');
+    await page.waitForURL((url) => url.pathname.includes('/resources/compose_service:media-stack:manga-worker') || url.pathname.includes('/resources/compose_service%3Amedia-stack%3Amanga-worker'));
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(TARGET_DIR, '04_resource_detail_logs.png'), fullPage: true });

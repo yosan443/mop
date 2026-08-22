@@ -73,6 +73,20 @@ impl FakeResourceCollector {
                         "project": "media-stack",
                         "containers_count": 2,
                         "managed_containers_count": 1,
+                        "containers": [
+                            {
+                                "name": "media-stack-manga-worker-1",
+                                "service": "manga-worker",
+                                "status": "running",
+                                "is_managed": true,
+                            },
+                            {
+                                "name": "media-stack-db-1",
+                                "service": "db",
+                                "status": "running",
+                                "is_managed": false,
+                            }
+                        ],
                     })
                     .to_string(),
                 ),
@@ -94,6 +108,14 @@ impl FakeResourceCollector {
                         "depends_on": ["db"],
                         "containers_count": 1,
                         "mop.managed": "true",
+                        "containers": [
+                            {
+                                "name": "media-stack-manga-worker-1",
+                                "service": "manga-worker",
+                                "status": "running",
+                                "is_managed": true,
+                            }
+                        ],
                     })
                     .to_string(),
                 ),
@@ -115,6 +137,14 @@ impl FakeResourceCollector {
                         "depends_on": [],
                         "containers_count": 1,
                         "mop.managed": "false",
+                        "containers": [
+                            {
+                                "name": "media-stack-db-1",
+                                "service": "db",
+                                "status": "running",
+                                "is_managed": false,
+                            }
+                        ],
                     })
                     .to_string(),
                 ),

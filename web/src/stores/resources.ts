@@ -99,6 +99,15 @@ export const useResourceStore = defineStore('resources', () => {
         if (details.value[evt.id]) {
           details.value[evt.id].status = evt.status;
         }
+
+        // When a container or compose event arrives, refresh all compose project & service details
+        if (evt.id.startsWith('docker:') || evt.id.startsWith('compose_')) {
+          for (const r of resources.value) {
+            if (r.id.startsWith('compose_project:') || r.id.startsWith('compose_service:')) {
+              fetchResourceDetail(r.id);
+            }
+          }
+        }
       } catch (err) {
         console.error('Failed to parse resource event:', err);
       }

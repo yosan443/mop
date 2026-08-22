@@ -249,11 +249,24 @@ impl ComposeCollector {
         for (project_name, p_containers) in &projects {
             let managed_count = p_containers.iter().filter(|c| c.is_managed).count();
             let total_count = p_containers.len();
+            let containers_json = p_containers
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "name": c.container_name,
+                        "service": c.service,
+                        "status": c.status.as_str(),
+                        "is_managed": c.is_managed,
+                    })
+                })
+                .collect::<Vec<_>>();
+
             let labels_json = serde_json::json!({
                 "type": "compose_project",
                 "project": project_name,
                 "containers_count": total_count,
                 "managed_containers_count": managed_count,
+                "containers": containers_json,
             })
             .to_string();
 
