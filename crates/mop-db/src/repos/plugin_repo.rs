@@ -359,7 +359,22 @@ impl PluginSettingsRepo {
         Ok(())
     }
 
-    pub async fn apply_draft_settings(&self, plugin_id: &str) -> Result<(), AppError> {
+    pub async fn save_draft_settings(
+        &self,
+        plugin_id: &str,
+        settings: HashMap<String, serde_json::Value>,
+        updated_by: &str,
+    ) -> Result<SettingsDiff, AppError> {
+        for (k, v) in &settings {
+            self.save_draft_setting(plugin_id, k, v, updated_by).await?;
+        }
+        self.get_settings_diff(plugin_id).await
+    }
+
+    pub async fn apply_draft_settings(
+        &self,
+        plugin_id: &str,
+    ) -> Result<HashMap<String, serde_json::Value>, AppError> {
         let drafts = self.get_draft_settings(plugin_id).await?;
         let now_str = Utc::now().to_rfc3339();
 
@@ -397,12 +412,16 @@ impl PluginSettingsRepo {
         tx.commit()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
+        self.get_applied_settings(plugin_id).await
     }
 
     pub async fn get_settings_diff(&self, plugin_id: &str) -> Result<SettingsDiff, AppError> {
         let applied = self.get_applied_settings(plugin_id).await?;
         let draft = self.get_draft_settings(plugin_id).await?;
+
+        if draft.is_empty() {
+            return Ok(SettingsDiff { items: Vec::new() });
+        }
 
         let mut all_keys: HashSet<String> = applied.keys().cloned().collect();
         all_keys.extend(draft.keys().cloned());

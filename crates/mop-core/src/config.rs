@@ -218,14 +218,21 @@ pub struct LimitsConfig {
 pub struct PluginsConfig {
     #[serde(default = "default_plugins_dir")]
     pub dir: PathBuf,
+    #[serde(default = "default_run_dir")]
+    pub run_dir: PathBuf,
     #[serde(default = "default_crash_limit")]
     pub crash_limit: u32,
     #[serde(default = "default_crash_window_secs")]
     pub crash_window_secs: u64,
+    #[serde(default)]
+    pub use_systemd_transient: bool,
 }
 
 fn default_plugins_dir() -> PathBuf {
     PathBuf::from("/var/lib/mop/plugins")
+}
+fn default_run_dir() -> PathBuf {
+    PathBuf::from("/run/mop")
 }
 fn default_crash_limit() -> u32 {
     5
@@ -238,8 +245,10 @@ impl Default for PluginsConfig {
     fn default() -> Self {
         Self {
             dir: default_plugins_dir(),
+            run_dir: default_run_dir(),
             crash_limit: default_crash_limit(),
             crash_window_secs: default_crash_window_secs(),
+            use_systemd_transient: false,
         }
     }
 }

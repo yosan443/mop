@@ -23,6 +23,12 @@ impl PluginState {
     }
 }
 
+impl std::fmt::Display for PluginState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginRecord {
     pub id: String,
@@ -47,7 +53,9 @@ pub struct PluginPermissionRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingDiffItem {
     pub key: String,
+    #[serde(alias = "old_value")]
     pub applied_value: Option<serde_json::Value>,
+    #[serde(alias = "new_value")]
     pub draft_value: Option<serde_json::Value>,
     pub change_type: String, // "added", "modified", "deleted", "unchanged"
 }

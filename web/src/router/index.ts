@@ -6,6 +6,8 @@ import LoginView from '../views/LoginView.vue';
 import SetupView from '../views/SetupView.vue';
 import RegisterView from '../views/RegisterView.vue';
 import UsersView from '../views/UsersView.vue';
+import PluginsView from '../views/PluginsView.vue';
+import PluginContainerView from '../views/PluginContainerView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -40,6 +42,18 @@ const routes: RouteRecordRaw[] = [
     name: 'users',
     component: UsersView,
     meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/plugins',
+    name: 'plugins',
+    component: PluginsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/plugins/:id',
+    name: 'plugin-container',
+    component: PluginContainerView,
+    meta: { requiresAuth: true },
   },
   {
     path: '/:pathMatch(.*)*',

@@ -198,10 +198,18 @@ onUnmounted(() => {
       <div class="header-brand">
         <span class="brand-logo">⚡</span>
         <span class="brand-name">mop</span>
-        <span class="badge badge-success">M3</span>
+        <span class="badge badge-success">M4</span>
       </div>
 
       <div class="header-actions">
+        <router-link
+          to="/plugins"
+          class="btn btn-secondary btn-sm"
+          id="nav-plugins"
+        >
+          🧩 プラグイン
+        </router-link>
+
         <router-link
           v-if="authStore.user?.role === 'admin'"
           to="/settings/users"

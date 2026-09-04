@@ -253,6 +253,22 @@ impl RpcError {
     pub const UNAUTHORIZED: i64 = -32001;
     pub const ACTION_NOT_ALLOWED: i64 = -32002;
     pub const CAPABILITY_REQUIRED: i64 = -32003;
+
+    pub fn internal_error(message: impl Into<String>) -> Self {
+        Self::new(Self::INTERNAL_ERROR, message, None)
+    }
+
+    pub fn method_not_found(message: impl Into<String>) -> Self {
+        Self::new(Self::METHOD_NOT_FOUND, message, None)
+    }
+
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        Self::new(Self::PARSE_ERROR, message, None)
+    }
+
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(Self::INVALID_PARAMS, message, None)
+    }
 }
 
 // -----------------------------------------------------------------------------

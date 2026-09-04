@@ -239,26 +239,37 @@ if not sock_path:
     sys.exit(1)
 
 if os.path.exists(sock_path):
-    os.remove(sock_path)
+    try:
+        os.remove(sock_path)
+    except:
+        pass
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.bind(sock_path)
-s.listen(1)
+s.listen(5)
 
-try:
+while True:
     conn, _ = s.accept()
-    line = conn.recv(1024).decode('utf-8')
+    f = conn.makefile("rwb", buffering=0)
+    line = f.readline()
     if line:
-        req = json.loads(line.strip())
-        res = {"jsonrpc": "2.0", "result": {"status": "ok"}, "id": req.get("id", 1)}
-        conn.sendall((json.dumps(res) + "\n").encode('utf-8'))
-        time.sleep(0.1)
-        conn.close()
-finally:
-    s.close()
-
-# Exit with error to simulate crash
-sys.exit(1)
+        try:
+            req = json.loads(line.decode("utf-8").strip())
+            if req.get("method") == "initialize":
+                res = {"jsonrpc": "2.0", "result": {"status": "ok"}, "id": req.get("id", 1)}
+                f.write((json.dumps(res) + "\n").encode("utf-8"))
+                f.flush()
+                time.sleep(0.05)
+                conn.close()
+                s.close()
+                sys.exit(1)
+            else:
+                res = {"jsonrpc": "2.0", "result": {"status": "ok"}, "id": req.get("id", 1)}
+                f.write((json.dumps(res) + "\n").encode("utf-8"))
+                f.flush()
+        except Exception as e:
+            pass
+    conn.close()
 "#;
     std::fs::write(&script_path, script_content).unwrap();
     #[cfg(unix)]
@@ -299,9 +310,13 @@ exec = "crasher.py"
 
     // Wait and verify that supervisor detects repeated crashes and automatically transitions to Disabled
     let mut auto_disabled = false;
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+    for i in 0..60 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
         if let Some(record) = plugin_repo.find_by_id("mop.crasher").await.unwrap() {
+            println!(
+                "Check #{i}: state={:?}, enabled={}",
+                record.state, record.enabled
+            );
             if record.state == PluginState::Disabled && !record.enabled {
                 auto_disabled = true;
                 break;
