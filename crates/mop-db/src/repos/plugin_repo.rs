@@ -419,6 +419,10 @@ impl PluginSettingsRepo {
         let applied = self.get_applied_settings(plugin_id).await?;
         let draft = self.get_draft_settings(plugin_id).await?;
 
+        if draft.is_empty() {
+            return Ok(SettingsDiff { items: Vec::new() });
+        }
+
         let mut all_keys: HashSet<String> = applied.keys().cloned().collect();
         all_keys.extend(draft.keys().cloned());
 

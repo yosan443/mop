@@ -2,7 +2,6 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 
 export interface PluginPermission {
-  id: string;
   plugin_id: string;
   capability: string;
   value_json: string;
@@ -26,9 +25,11 @@ export interface PluginItem {
 
 export interface SettingsDiffItem {
   key: string;
+  applied_value?: any;
+  draft_value?: any;
   old_value?: any;
   new_value?: any;
-  change_type: 'added' | 'modified' | 'deleted';
+  change_type: 'added' | 'modified' | 'deleted' | 'unchanged';
 }
 
 export interface SettingsDiff {
@@ -163,12 +164,30 @@ export const usePluginStore = defineStore('plugins', () => {
     return rpcRes.result;
   }
 
+  async function refreshPlugins() {
+    loading.value = true;
+    error.value = null;
+    try {
+      const res = await fetch('/api/v1/plugins/refresh', { method: 'POST' });
+      if (!res.ok) {
+        throw new Error(`Failed to refresh plugins (${res.status})`);
+      }
+      const data = await res.json();
+      plugins.value = data;
+    } catch (err: any) {
+      error.value = err.message || 'プラグイン再スキャンに失敗しました';
+    } finally {
+      loading.value = false;
+    }
+  }
+
   return {
     plugins,
     loading,
     error,
     uiPlugins,
     fetchPlugins,
+    refreshPlugins,
     enablePlugin,
     disablePlugin,
     getSettings,

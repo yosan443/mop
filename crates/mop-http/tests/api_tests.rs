@@ -856,6 +856,12 @@ jobs = ["hello.ping"]
     let diff_json: serde_json::Value = serde_json::from_slice(&diff_body).unwrap();
     assert_eq!(diff_json["items"].as_array().unwrap().len(), 1);
     assert_eq!(diff_json["items"][0]["key"], "greeting");
+    assert_eq!(
+        diff_json["items"][0]["applied_value"],
+        serde_json::Value::Null
+    );
+    assert_eq!(diff_json["items"][0]["draft_value"], "Bonjour");
+    assert_eq!(diff_json["items"][0]["change_type"], "added");
 
     // 6. POST /api/v1/plugins/{id}/settings/apply
     let apply_req = Request::builder()
@@ -867,6 +873,76 @@ jobs = ["hello.ping"]
         .unwrap();
     let apply_res = app.clone().oneshot(apply_req).await.unwrap();
     assert_eq!(apply_res.status(), StatusCode::OK);
+
+    // Verify diff after apply has empty items because all drafts have been applied
+    let diff_after_req = Request::builder()
+        .uri("/api/v1/plugins/mop.hello/settings/diff")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let diff_after_res = app.clone().oneshot(diff_after_req).await.unwrap();
+    assert_eq!(diff_after_res.status(), StatusCode::OK);
+    let diff_after_body = diff_after_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let diff_after_json: serde_json::Value = serde_json::from_slice(&diff_after_body).unwrap();
+    assert_eq!(diff_after_json["items"].as_array().unwrap().len(), 0);
+
+    // Now save a modified draft setting and verify modified change_type with applied_value and draft_value
+    let modify_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/plugins/mop.hello/settings")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "settings": { "greeting": "Hello Revised" }
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let modify_res = app.clone().oneshot(modify_req).await.unwrap();
+    assert_eq!(modify_res.status(), StatusCode::OK);
+
+    let diff_mod_req = Request::builder()
+        .uri("/api/v1/plugins/mop.hello/settings/diff")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let diff_mod_res = app.clone().oneshot(diff_mod_req).await.unwrap();
+    assert_eq!(diff_mod_res.status(), StatusCode::OK);
+    let diff_mod_body = diff_mod_res.into_body().collect().await.unwrap().to_bytes();
+    let diff_mod_json: serde_json::Value = serde_json::from_slice(&diff_mod_body).unwrap();
+    assert_eq!(diff_mod_json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(diff_mod_json["items"][0]["key"], "greeting");
+    assert_eq!(diff_mod_json["items"][0]["applied_value"], "Bonjour");
+    assert_eq!(diff_mod_json["items"][0]["draft_value"], "Hello Revised");
+    assert_eq!(diff_mod_json["items"][0]["change_type"], "modified");
+
+    // Verify /api/v1/plugins/refresh (Admin only, viewer forbidden)
+    let viewer_refresh_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/refresh")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let viewer_refresh_res = app.clone().oneshot(viewer_refresh_req).await.unwrap();
+    assert_eq!(viewer_refresh_res.status(), StatusCode::FORBIDDEN);
+
+    let admin_refresh_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/refresh")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let admin_refresh_res = app.clone().oneshot(admin_refresh_req).await.unwrap();
+    assert_eq!(admin_refresh_res.status(), StatusCode::OK);
 
     // 7. POST /api/v1/plugins/{id}/rpc (RBAC check for job.submit)
     let viewer_rpc_req = Request::builder()
@@ -912,4 +988,141 @@ jobs = ["hello.ping"]
         .unwrap();
     let traversal_res = app.clone().oneshot(traversal_req).await.unwrap();
     assert_eq!(traversal_res.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_plugin_settings_apply_validation_blocks_promotion() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp_dir.path().join("plugins");
+    let run_dir = tmp_dir.path().join("run");
+    let plugin_sockets_dir = run_dir.join("plugins");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    std::fs::create_dir_all(&plugin_sockets_dir).unwrap();
+
+    let plugin_dir = plugins_dir.join("mop.valtest").join("0.1.0");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+
+    let manifest_toml = r#"
+id = "mop.valtest"
+name = "Validation Test Plugin"
+version = "0.1.0"
+api_version = "1"
+"#;
+    std::fs::write(plugin_dir.join("plugin.toml"), manifest_toml).unwrap();
+
+    let mut config = Config::default();
+    config.plugins.dir = plugins_dir;
+    config.plugins.run_dir = run_dir.clone();
+
+    let (app, _pool, _tmp) = setup_custom_app(config).await;
+
+    // 1. Setup admin user
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/register")
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "admin",
+                "password": "Password12345!"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let setup_res = app.clone().oneshot(setup_req).await.unwrap();
+    assert_eq!(setup_res.status(), StatusCode::CREATED);
+    let admin_cookie = setup_res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 2. Scan plugin
+    let refresh_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/refresh")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let refresh_res = app.clone().oneshot(refresh_req).await.unwrap();
+    assert_eq!(refresh_res.status(), StatusCode::OK);
+
+    // 3. Save draft setting
+    let save_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/plugins/mop.valtest/settings")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "settings": { "port": 99999 }
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let save_res = app.clone().oneshot(save_req).await.unwrap();
+    assert_eq!(save_res.status(), StatusCode::OK);
+
+    // 4. Mock Unix socket for mop.valtest that returns valid: false for config.validate
+    let socket_path = plugin_sockets_dir.join("mop.valtest.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+    let server_task = tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        if let Ok((stream, _)) = listener.accept().await {
+            let (reader, mut writer) = stream.into_split();
+            let mut lines = BufReader::new(reader).lines();
+            if let Ok(Some(line)) = lines.next_line().await {
+                let rpc_req: serde_json::Value = serde_json::from_str(&line).unwrap();
+                if rpc_req["method"] == "config.validate" {
+                    let resp = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": rpc_req["id"],
+                        "result": {
+                            "valid": false,
+                            "message": "Port 99999 is out of allowed range"
+                        }
+                    });
+                    let resp_str = format!("{}\n", resp);
+                    let _ = writer.write_all(resp_str.as_bytes()).await;
+                    let _ = writer.flush().await;
+                }
+            }
+        }
+    });
+
+    // 5. Attempt apply: must be rejected with 400 Bad Request
+    let apply_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.valtest/settings/apply")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let apply_res = app.clone().oneshot(apply_req).await.unwrap();
+    assert_eq!(apply_res.status(), StatusCode::BAD_REQUEST);
+
+    let _ = server_task.await;
+
+    // 6. Verify that draft was NOT promoted
+    let diff_req = Request::builder()
+        .uri("/api/v1/plugins/mop.valtest/settings/diff")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let diff_res = app.clone().oneshot(diff_req).await.unwrap();
+    assert_eq!(diff_res.status(), StatusCode::OK);
+    let diff_body = diff_res.into_body().collect().await.unwrap().to_bytes();
+    let diff_json: serde_json::Value = serde_json::from_slice(&diff_body).unwrap();
+    assert_eq!(
+        diff_json["items"][0]["applied_value"],
+        serde_json::Value::Null
+    );
+    assert_eq!(diff_json["items"][0]["draft_value"], 99999);
+    assert_eq!(diff_json["items"][0]["change_type"], "added");
 }

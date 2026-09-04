@@ -116,10 +116,10 @@ function getStatusBadgeClass(state: string) {
         <button
           class="btn btn-secondary btn-sm"
           :disabled="pluginStore.loading"
-          @click="pluginStore.fetchPlugins"
+          @click="pluginStore.refreshPlugins"
           id="btn-refresh-plugins"
         >
-          🔄 更新
+          🔄 再スキャン
         </button>
       </div>
     </header>
@@ -176,7 +176,7 @@ function getStatusBadgeClass(state: string) {
               <div class="perms-tags">
                 <span
                   v-for="perm in plugin.permissions"
-                  :key="perm.id"
+                  :key="`${perm.capability}:${perm.value_json}`"
                   class="perm-tag"
                 >
                   {{ perm.capability }}: {{ perm.value_json }}

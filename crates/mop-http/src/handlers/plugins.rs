@@ -31,17 +31,12 @@ pub struct PluginDetailResponse {
     pub applied_settings: Option<HashMap<String, Value>>,
 }
 
-/// GET /api/v1/plugins (Viewer+)
-pub async fn list_plugins(
-    State(state): State<AppState>,
-    RequireAuth(_user): RequireAuth,
+async fn list_plugins_internal(
+    state: &AppState,
 ) -> Result<Json<Vec<PluginDetailResponse>>, (StatusCode, Json<ErrorResponse>)> {
     let plugin_repo = PluginRepo::new(state.pool.clone());
     let perms_repo = PluginPermissionsRepo::new(state.pool.clone());
     let settings_repo = PluginSettingsRepo::new(state.pool.clone());
-
-    // Trigger scan first
-    let _ = state.plugin_supervisor.scan_and_register_plugins().await;
 
     let plugins = plugin_repo.list_plugins().await.map_err(|e| {
         (
@@ -78,6 +73,33 @@ pub async fn list_plugins(
     }
 
     Ok(Json(response))
+}
+
+/// GET /api/v1/plugins (Viewer+)
+pub async fn list_plugins(
+    State(state): State<AppState>,
+    RequireAuth(_user): RequireAuth,
+) -> Result<Json<Vec<PluginDetailResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    list_plugins_internal(&state).await
+}
+
+/// POST /api/v1/plugins/refresh (Admin)
+pub async fn refresh_plugins(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+) -> Result<Json<Vec<PluginDetailResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let _ = state
+        .plugin_supervisor
+        .scan_and_register_plugins()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::from(e)),
+            )
+        })?;
+
+    list_plugins_internal(&state).await
 }
 
 /// POST /api/v1/plugins/{id}/enable (Admin)
@@ -198,18 +220,70 @@ pub async fn apply_plugin_settings(
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
     let settings_repo = PluginSettingsRepo::new(state.pool.clone());
+    let draft_settings = settings_repo.get_draft_settings(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::from(e)),
+        )
+    })?;
+
+    let socket_path = state.plugin_supervisor.plugin_socket_path(&id);
+
+    // 1. If plugin backend process is active (socket exists), run config.validate first
+    if socket_path.exists() {
+        let client = UnixRpcClient::new(&socket_path);
+        let params = serde_json::to_value(&draft_settings).unwrap_or(serde_json::json!({}));
+        match client.call("config.validate", Some(params)).await {
+            Ok(res_val) => {
+                if let Some(valid) = res_val.get("valid").and_then(|v| v.as_bool()) {
+                    if !valid {
+                        let msg = res_val
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .or_else(|| res_val.get("error").and_then(|e| e.as_str()))
+                            .unwrap_or("Plugin validation rejected the draft settings");
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(ErrorResponse::from(AppError::Validation(msg.to_string()))),
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse::from(AppError::Validation(format!(
+                        "Plugin config.validate RPC failed: {e}"
+                    )))),
+                ));
+            }
+        }
+    }
+
+    // 2. Promote draft settings to applied
     let new_applied = settings_repo
         .apply_draft_settings(&id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse::from(e))))?;
 
-    // Forward config.apply RPC to running plugin process if socket exists
-    let socket_path = state.plugin_supervisor.plugin_socket_path(&id);
+    // 3. Forward config.apply RPC to running plugin process if socket exists
     if socket_path.exists() {
         let client = UnixRpcClient::new(&socket_path);
         let params = serde_json::to_value(&new_applied).unwrap_or(serde_json::json!({}));
         let _ = client.call("config.apply", Some(params)).await;
     }
+
+    // 4. Gracefully restart plugin process
+    state
+        .plugin_supervisor
+        .restart_plugin_process(&id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::from(e)),
+            )
+        })?;
 
     Ok(Json(serde_json::json!({ "status": "applied", "id": id })))
 }

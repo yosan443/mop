@@ -168,11 +168,11 @@ async function handleApply() {
                 <span class="diff-key">{{ item.key }}</span>
               </div>
               <div class="diff-values">
-                <div v-if="item.old_value !== undefined" class="diff-old">
-                  - {{ JSON.stringify(item.old_value) }}
+                <div v-if="(item.applied_value ?? item.old_value) !== undefined && (item.applied_value ?? item.old_value) !== null" class="diff-old" data-test="diff-applied">
+                  - {{ JSON.stringify(item.applied_value ?? item.old_value) }}
                 </div>
-                <div v-if="item.new_value !== undefined" class="diff-new">
-                  + {{ JSON.stringify(item.new_value) }}
+                <div v-if="(item.draft_value ?? item.new_value) !== undefined && (item.draft_value ?? item.new_value) !== null" class="diff-new" data-test="diff-draft">
+                  + {{ JSON.stringify(item.draft_value ?? item.new_value) }}
                 </div>
               </div>
             </div>

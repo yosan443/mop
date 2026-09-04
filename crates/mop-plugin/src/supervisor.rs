@@ -314,6 +314,30 @@ impl PluginSupervisor {
         Ok(updated)
     }
 
+    /// Gracefully restart an active plugin process
+    pub async fn restart_plugin_process(&self, plugin_id: &str) -> Result<(), AppError> {
+        let record = self
+            .plugin_repo
+            .find_by_id(plugin_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Plugin {plugin_id} not found")))?;
+
+        if !record.enabled {
+            return Ok(());
+        }
+
+        let manifest: PluginManifest = serde_json::from_str(&record.manifest_json)
+            .map_err(|e| AppError::Plugin(format!("Failed to deserialize manifest: {e}")))?;
+
+        if manifest.backend.is_none() {
+            return Ok(());
+        }
+
+        self.stop_plugin_process(plugin_id).await?;
+        self.start_plugin_process(plugin_id, &manifest).await?;
+        Ok(())
+    }
+
     /// Start the backend process for a plugin and initialize it over Unix socket JSON-RPC
     pub async fn start_plugin_process(
         &self,

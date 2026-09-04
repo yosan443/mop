@@ -28,8 +28,8 @@ use crate::handlers::{
     jobs::{get_job, list_jobs, stream_jobs},
     plugins::{
         apply_plugin_settings, disable_plugin, enable_plugin, get_plugin_settings,
-        get_plugin_settings_diff, list_plugins, proxy_plugin_rpc, save_plugin_setting,
-        serve_plugin_ui,
+        get_plugin_settings_diff, list_plugins, proxy_plugin_rpc, refresh_plugins,
+        save_plugin_setting, serve_plugin_ui,
     },
     resources::{
         execute_resource_action, get_resource_detail, get_resource_logs, list_resources,
@@ -97,6 +97,13 @@ pub fn create_app_with_supervisor(
     let active_resource_locks = Arc::new(Mutex::new(HashSet::new()));
     let job_service = JobService::new(pool.clone());
 
+    let supervisor_scan = plugin_supervisor.clone();
+    tokio::spawn(async move {
+        if let Err(e) = supervisor_scan.scan_and_register_plugins().await {
+            tracing::warn!("Initial plugin scan failed: {e}");
+        }
+    });
+
     let app_state = AppState {
         pool,
         config,
@@ -130,6 +137,7 @@ pub fn create_app_with_supervisor(
         .route("/jobs/stream", get(stream_jobs))
         // Plugins API (Viewer+ / Admin)
         .route("/plugins", get(list_plugins))
+        .route("/plugins/refresh", post(refresh_plugins))
         .route("/plugins/{id}/enable", post(enable_plugin))
         .route("/plugins/{id}/disable", post(disable_plugin))
         .route(
