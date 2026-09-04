@@ -95,7 +95,7 @@ pub fn create_app_with_supervisor(
     let auth_limiter = IpRateLimiter::new_auth_limiter();
     let action_limiter = KeyRateLimiter::new_action_limiter();
     let active_resource_locks = Arc::new(Mutex::new(HashSet::new()));
-    let job_service = JobService::new(pool.clone());
+    let job_service = plugin_supervisor.job_service().clone();
 
     let supervisor_scan = plugin_supervisor.clone();
     tokio::spawn(async move {

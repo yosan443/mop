@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -7,6 +8,8 @@ const __dirname = path.dirname(__filename);
 
 const TEST_PORT = 18999;
 const TEST_DB = path.resolve(__dirname, '../target/e2e-test.db');
+const TEST_PLUGINS_DIR = path.resolve(__dirname, '../target/e2e-plugins');
+const TEST_RUN_DIR = path.join(os.tmpdir(), 'mop-e2e-run');
 
 export default defineConfig({
   testDir: './tests',
@@ -14,6 +17,8 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  globalSetup: './global-setup.ts',
+  globalTeardown: './global-teardown.ts',
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: `http://127.0.0.1:${TEST_PORT}`,
@@ -27,7 +32,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `sh -c "rm -f ${TEST_DB}* && cargo run -p mop-cli -- serve --bind 127.0.0.1:${TEST_PORT} --db-path ${TEST_DB} --fake-backend"`,
+    command: `sh -c "rm -f ${TEST_DB}* && cargo run -p mop-cli -- serve --bind 127.0.0.1:${TEST_PORT} --db-path ${TEST_DB} --fake-backend --plugins-dir ${TEST_PLUGINS_DIR} --plugins-run-dir ${TEST_RUN_DIR} 2>&1 | tee target/mop-server.log"`,
     cwd: path.resolve(__dirname, '..'),
     url: `http://127.0.0.1:${TEST_PORT}/health`,
     reuseExistingServer: false,

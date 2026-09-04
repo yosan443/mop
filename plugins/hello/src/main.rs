@@ -225,6 +225,10 @@ async fn run_hello_job(state: PluginState, job_id: String, _job_type: String) {
         let g = state.greeting.read().await;
         g.clone()
     };
+    info!(
+        "run_hello_job started for job_id={job_id} on host_socket={}",
+        host_socket.display()
+    );
 
     if let Ok(mut stream) = UnixStream::connect(&host_socket).await {
         // 1. Progress 25%
@@ -286,6 +290,7 @@ async fn run_hello_job(state: PluginState, job_id: String, _job_type: String) {
             ),
         );
         let _ = send_notif(&mut stream, finished_notif).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     } else {
         warn!(
             "Failed to connect to host socket at {}",
@@ -301,5 +306,6 @@ async fn send_notif(
     let bytes = serde_json::to_vec(&notif)?;
     stream.write_all(&bytes).await?;
     stream.write_all(b"\n").await?;
+    stream.flush().await?;
     Ok(())
 }

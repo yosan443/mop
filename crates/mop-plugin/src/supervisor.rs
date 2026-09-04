@@ -105,6 +105,10 @@ impl PluginSupervisor {
         &self.host_handler
     }
 
+    pub fn job_service(&self) -> &JobService {
+        &self.job_service
+    }
+
     /// Register a custom PID to plugin_id mapping (useful for testing or external workers)
     pub async fn register_plugin_pid(&self, pid: u32, plugin_id: &str) {
         self.host_handler.register_plugin_pid(pid, plugin_id).await;

@@ -5,7 +5,10 @@ use axum::{
 use http_body_util::BodyExt;
 use mop_core::config::{Config, RegistrationMode};
 use mop_core::models::{AuditResult, Resource, Role, UserResponse};
-use mop_db::{create_sqlite_pool, repos::AuditRepo, repos::UserRepo, run_migrations};
+use mop_db::{
+    create_sqlite_pool, repos::AuditRepo, repos::PluginPermissionsRepo, repos::UserRepo,
+    run_migrations,
+};
 use mop_http::create_app;
 use mop_watch::FakeResourceCollector;
 use std::sync::Arc;
@@ -963,6 +966,93 @@ jobs = ["hello.ping"]
         .unwrap();
     let viewer_rpc_res = app.clone().oneshot(viewer_rpc_req).await.unwrap();
     assert_eq!(viewer_rpc_res.status(), StatusCode::FORBIDDEN);
+
+    // Grant capability 'jobs': 'hello.ping' for mop.hello
+    let perms_repo = PluginPermissionsRepo::new(_pool.clone());
+    perms_repo
+        .grant_permission("mop.hello", "jobs", "hello.ping", "admin")
+        .await
+        .unwrap();
+
+    // Condition 1: job_type other than hello.ping is rejected with 403 (CAPABILITY_REQUIRED)
+    let evil_rpc_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.hello/rpc")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "job.submit",
+                "params": { "job_type": "evil.hack" },
+                "id": 2
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let evil_rpc_res = app.clone().oneshot(evil_rpc_req).await.unwrap();
+    assert_eq!(evil_rpc_res.status(), StatusCode::FORBIDDEN);
+    let evil_body = evil_rpc_res.into_body().collect().await.unwrap().to_bytes();
+    let evil_json: serde_json::Value = serde_json::from_slice(&evil_body).unwrap();
+    assert!(evil_json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("CAPABILITY_REQUIRED"));
+
+    // Condition 2: allowed job_type "hello.ping" submitted, but process is not running.
+    // Job must be failed immediately and NOT left orphaned in Queued state.
+    let valid_job_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.hello/rpc")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "job.submit",
+                "params": { "job_type": "hello.ping" },
+                "id": 3
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let valid_job_res = app.clone().oneshot(valid_job_req).await.unwrap();
+    assert_eq!(valid_job_res.status(), StatusCode::OK);
+    let valid_job_body = valid_job_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let valid_job_json: serde_json::Value = serde_json::from_slice(&valid_job_body).unwrap();
+    assert!(valid_job_json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("process is not running"));
+
+    // Verify job in JobService was marked as failed (no queued orphan)
+    let list_jobs_req = Request::builder()
+        .uri("/api/v1/jobs")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let list_jobs_res = app.clone().oneshot(list_jobs_req).await.unwrap();
+    let list_jobs_body = list_jobs_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let list_jobs_json: serde_json::Value = serde_json::from_slice(&list_jobs_body).unwrap();
+    let job_item = list_jobs_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["kind"] == "hello.ping")
+        .unwrap();
+    assert_eq!(job_item["status"], "failed");
 
     // 8. GET /api/v1/plugins/{id}/ui/index.js (Static asset serving)
     let ui_req = Request::builder()

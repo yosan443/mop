@@ -144,6 +144,7 @@ async function handleApply() {
             v-model="settingsJson"
             class="code-textarea"
             rows="10"
+            :disabled="loading"
             placeholder='{ "key": "value" }'
             id="settings-json-input"
           ></textarea>
@@ -168,11 +169,11 @@ async function handleApply() {
                 <span class="diff-key">{{ item.key }}</span>
               </div>
               <div class="diff-values">
-                <div v-if="(item.applied_value ?? item.old_value) !== undefined && (item.applied_value ?? item.old_value) !== null" class="diff-old" data-test="diff-applied">
-                  - {{ JSON.stringify(item.applied_value ?? item.old_value) }}
+                <div class="diff-old" data-test="diff-applied">
+                  - {{ (item.applied_value ?? item.old_value) !== undefined && (item.applied_value ?? item.old_value) !== null ? JSON.stringify(item.applied_value ?? item.old_value) : '(なし)' }}
                 </div>
-                <div v-if="(item.draft_value ?? item.new_value) !== undefined && (item.draft_value ?? item.new_value) !== null" class="diff-new" data-test="diff-draft">
-                  + {{ JSON.stringify(item.draft_value ?? item.new_value) }}
+                <div class="diff-new" data-test="diff-draft">
+                  + {{ (item.draft_value ?? item.new_value) !== undefined && (item.draft_value ?? item.new_value) !== null ? JSON.stringify(item.draft_value ?? item.new_value) : '(削除)' }}
                 </div>
               </div>
             </div>

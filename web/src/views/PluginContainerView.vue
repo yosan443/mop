@@ -130,6 +130,9 @@ watch(
       </div>
 
       <div class="header-right">
+        <router-link to="/jobs" class="btn btn-secondary btn-sm" id="nav-jobs">
+          📋 ジョブ
+        </router-link>
         <button class="btn btn-secondary btn-sm" @click="toggleTheme" id="btn-toggle-theme">
           🌓 テーマ切替 ({{ currentTheme }})
         </button>

@@ -265,11 +265,20 @@ impl HostNotificationHandler {
                                 if line.trim().is_empty() {
                                     continue;
                                 }
-                                if let Ok(notif) = serde_json::from_str::<RpcNotification>(&line) {
-                                    if let Err(e) =
-                                        h.handle_notification(&sender_plugin_id, notif).await
-                                    {
-                                        error!("Error handling notification from {sender_plugin_id}: {e}");
+                                match serde_json::from_str::<RpcNotification>(&line) {
+                                    Ok(notif) => {
+                                        info!(
+                                            "Received notification from {sender_plugin_id}: {}",
+                                            notif.method
+                                        );
+                                        if let Err(e) =
+                                            h.handle_notification(&sender_plugin_id, notif).await
+                                        {
+                                            error!("Error handling notification from {sender_plugin_id}: {e}");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to parse notification JSON from {sender_plugin_id}: {e}; raw line: {line}");
                                     }
                                 }
                             }

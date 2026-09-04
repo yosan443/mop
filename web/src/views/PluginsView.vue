@@ -113,6 +113,13 @@ function getStatusBadgeClass(state: string) {
       </div>
 
       <div class="header-right">
+        <router-link
+          to="/jobs"
+          class="btn btn-secondary btn-sm"
+          id="nav-jobs"
+        >
+          📋 ジョブ
+        </router-link>
         <button
           class="btn btn-secondary btn-sm"
           :disabled="pluginStore.loading"
