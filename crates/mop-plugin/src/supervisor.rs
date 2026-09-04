@@ -622,6 +622,9 @@ impl PluginSupervisor {
             job.as_str()
         );
 
+        // NOTE(M5/M6): MainPID retrieval returns None in M4 as transient units are disabled by default.
+        // Before enabling transient mode in production (M5/M6), restore GetUnit / ActiveState polling
+        // to retrieve the active MainPID so that host.sock SO_PEERCRED verification succeeds.
         Ok((unit_name, None))
     }
 
