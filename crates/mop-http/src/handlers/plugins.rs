@@ -8,6 +8,7 @@ use axum::{
 use mop_auth::{RequireAdmin, RequireAuth};
 use mop_core::error::{AppError, ErrorResponse};
 use mop_core::models::plugin::{PluginPermissionRecord, SettingsDiff};
+use mop_core::models::JobStatus;
 use mop_db::repos::{PluginPermissionsRepo, PluginRepo, PluginSettingsRepo};
 use mop_plugin::rpc::UnixRpcClient;
 use mop_plugin_sdk::{RpcError, RpcRequest, RpcResponse};
@@ -339,21 +340,133 @@ pub async fn proxy_plugin_rpc(
     }
 
     // 3. Connect to plugin unix socket & forward RPC request
-    let socket_path = state.plugin_supervisor.plugin_socket_path(&id);
-    if !socket_path.exists() {
-        return Ok(Json(RpcResponse::error(
-            req.id,
-            RpcError::internal_error(format!("Plugin '{id}' process is not running")),
-        )));
+    if req.method == "job.submit" {
+        let params_val = req.params.as_ref();
+        let kind = params_val
+            .and_then(|p| p.get("job_type").or_else(|| p.get("kind")))
+            .and_then(|k| k.as_str())
+            .unwrap_or("hello.ping");
+
+        // 3a. Verify capability: Check plugin_permissions for capability == "jobs"
+        let perms_repo = PluginPermissionsRepo::new(state.pool.clone());
+        let granted_perms = perms_repo.list_permissions(&id).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::from(e)),
+            )
+        })?;
+
+        let mut allowed = false;
+        for perm in &granted_perms {
+            if perm.capability == "jobs" {
+                if perm.value_json == kind {
+                    allowed = true;
+                    break;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&perm.value_json) {
+                    if let Some(arr) = val.as_array() {
+                        if arr.iter().any(|item| item.as_str() == Some(kind)) {
+                            allowed = true;
+                            break;
+                        }
+                    } else if val.as_str() == Some(kind) {
+                        allowed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse::from(AppError::Forbidden(format!(
+                    "CAPABILITY_REQUIRED: Job type '{kind}' is not granted in 'jobs' capability for plugin '{id}'"
+                )))),
+            ));
+        }
+
+        // 3b. Submit job to JobService
+        let params_str = params_val
+            .map(|p| serde_json::to_string(p).unwrap_or_default())
+            .unwrap_or_else(|| "{}".to_string());
+        let job = state
+            .job_service
+            .submit(kind, Some(&id), &params_str, &user.username)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse::from(e)),
+                )
+            })?;
+
+        // 3c. Inject job_id into params
+        let mut req_clone = req.clone();
+        if let Some(params_obj) = req_clone.params.as_mut().and_then(|p| p.as_object_mut()) {
+            params_obj.insert(
+                "job_id".to_string(),
+                serde_json::Value::String(job.id.clone()),
+            );
+        } else {
+            req_clone.params =
+                Some(serde_json::json!({ "job_id": job.id.clone(), "job_type": kind }));
+        }
+
+        // 3d. Forward to plugin process
+        let socket_path = state.plugin_supervisor.plugin_socket_path(&id);
+        if !socket_path.exists() {
+            let err_msg = format!("Plugin '{id}' process is not running");
+            let _ = state
+                .job_service
+                .update_status(&job.id, JobStatus::Failed, Some(&err_msg))
+                .await;
+            return Ok(Json(RpcResponse::error(
+                req.id,
+                RpcError::internal_error(err_msg),
+            )));
+        }
+
+        let client = UnixRpcClient::new(&socket_path);
+        match client.call_raw(req_clone).await {
+            Ok(rpc_res) => {
+                if let Some(err) = &rpc_res.error {
+                    let _ = state
+                        .job_service
+                        .update_status(&job.id, JobStatus::Failed, Some(&err.message))
+                        .await;
+                }
+                Ok(Json(rpc_res))
+            }
+            Err(e) => {
+                let err_msg = format!("Failed to forward job to plugin '{id}': {e}");
+                let _ = state
+                    .job_service
+                    .update_status(&job.id, JobStatus::Failed, Some(&err_msg))
+                    .await;
+                Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(ErrorResponse::from(AppError::Plugin(err_msg))),
+                ))
+            }
+        }
+    } else {
+        let socket_path = state.plugin_supervisor.plugin_socket_path(&id);
+        if !socket_path.exists() {
+            return Ok(Json(RpcResponse::error(
+                req.id,
+                RpcError::internal_error(format!("Plugin '{id}' process is not running")),
+            )));
+        }
+
+        let client = UnixRpcClient::new(&socket_path);
+        let rpc_res = client
+            .call_raw(req.clone())
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse::from(e))))?;
+
+        Ok(Json(rpc_res))
     }
-
-    let client = UnixRpcClient::new(&socket_path);
-    let rpc_res = client
-        .call_raw(req.clone())
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse::from(e))))?;
-
-    Ok(Json(rpc_res))
 }
 
 /// GET /api/v1/plugins/{id}/ui/*file_path (Serve Static Plugin UI Assets)

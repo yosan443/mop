@@ -211,6 +211,14 @@ onUnmounted(() => {
         </router-link>
 
         <router-link
+          to="/jobs"
+          class="btn btn-secondary btn-sm"
+          id="nav-jobs"
+        >
+          📋 ジョブ
+        </router-link>
+
+        <router-link
           v-if="authStore.user?.role === 'admin'"
           to="/settings/users"
           class="btn btn-secondary btn-sm"

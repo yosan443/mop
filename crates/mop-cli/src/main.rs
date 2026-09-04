@@ -36,6 +36,12 @@ enum Commands {
 
         #[arg(long, help = "Force using fake resource collector for testing")]
         fake_backend: bool,
+
+        #[arg(long, help = "Plugins directory override")]
+        plugins_dir: Option<PathBuf>,
+
+        #[arg(long, help = "Plugins run directory override (sockets)")]
+        plugins_run_dir: Option<PathBuf>,
     },
 
     #[command(about = "Generate polkit rules JavaScript from allowlist (SPEC.md §9.1)")]
@@ -76,8 +82,7 @@ enum PluginCommands {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mop=info,tower_http=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -88,11 +93,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bind: None,
         db_path: None,
         fake_backend: false,
+        plugins_dir: None,
+        plugins_run_dir: None,
     }) {
         Commands::Serve {
             bind,
             db_path,
             fake_backend,
+            plugins_dir,
+            plugins_run_dir,
         } => {
             if let Some(b) = bind {
                 config.server.bind = b;
@@ -102,6 +111,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if fake_backend {
                 config.resources.fake = true;
+            }
+            if let Some(p) = plugins_dir {
+                config.plugins.dir = p;
+            }
+            if let Some(r) = plugins_run_dir {
+                config.plugins.run_dir = r;
             }
 
             run_server(config).await?;

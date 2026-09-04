@@ -8,6 +8,7 @@ import RegisterView from '../views/RegisterView.vue';
 import UsersView from '../views/UsersView.vue';
 import PluginsView from '../views/PluginsView.vue';
 import PluginContainerView from '../views/PluginContainerView.vue';
+import JobsView from '../views/JobsView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -42,6 +43,12 @@ const routes: RouteRecordRaw[] = [
     name: 'users',
     component: UsersView,
     meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/jobs',
+    name: 'jobs',
+    component: JobsView,
+    meta: { requiresAuth: true },
   },
   {
     path: '/plugins',

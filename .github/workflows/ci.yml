@@ -118,6 +118,9 @@ jobs:
       - name: Build mop-cli Binary
         run: cargo build -p mop-cli
 
+      - name: Build mop-plugin-hello Binary
+        run: cargo build -p mop-plugin-hello
+
       - name: Install E2E Dependencies & Playwright Browsers
         run: |
           cd e2e
