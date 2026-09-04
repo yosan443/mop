@@ -140,6 +140,7 @@ async function handleToggleDisable(user: User) {
 
         <nav class="nav-links">
           <router-link to="/" class="nav-item">ダッシュボード</router-link>
+          <router-link to="/plugins" class="nav-item">プラグイン管理</router-link>
           <router-link to="/settings/users" class="nav-item active">ユーザー管理</router-link>
         </nav>
       </div>

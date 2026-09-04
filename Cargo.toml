@@ -10,6 +10,7 @@ members = [
     "crates/mop-plugin-sdk",
     "crates/mop-http",
     "crates/mop-cli",
+    "plugins/hello",
 ]
 
 [workspace.package]

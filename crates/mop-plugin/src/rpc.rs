@@ -93,6 +93,57 @@ impl UnixRpcClient {
         }
     }
 
+    /// Send a raw JSON-RPC request and return the RpcResponse
+    pub async fn call_raw(&self, request: RpcRequest) -> Result<RpcResponse, AppError> {
+        let req_bytes = serde_json::to_vec(&request)
+            .map_err(|e| AppError::Plugin(format!("Failed to serialize RPC request: {e}")))?;
+
+        let method = request.method.clone();
+        let fut = async {
+            let stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+                AppError::Plugin(format!(
+                    "Failed to connect to plugin socket {}: {e}",
+                    self.socket_path.display()
+                ))
+            })?;
+
+            let (reader, mut writer) = stream.into_split();
+            writer
+                .write_all(&req_bytes)
+                .await
+                .map_err(|e| AppError::Plugin(format!("Failed to write to plugin socket: {e}")))?;
+            writer.write_all(b"\n").await.map_err(|e| {
+                AppError::Plugin(format!("Failed to write newline to plugin socket: {e}"))
+            })?;
+            writer
+                .flush()
+                .await
+                .map_err(|e| AppError::Plugin(format!("Failed to flush plugin socket: {e}")))?;
+
+            let mut lines = BufReader::new(reader).lines();
+            if let Some(line) = lines.next_line().await.map_err(|e| {
+                AppError::Plugin(format!("Failed to read response from plugin socket: {e}"))
+            })? {
+                let res: RpcResponse = serde_json::from_str(&line).map_err(|e| {
+                    AppError::Plugin(format!("Failed to parse JSON-RPC response '{line}': {e}"))
+                })?;
+                Ok(res)
+            } else {
+                Err(AppError::Plugin(
+                    "Connection closed by plugin without response".to_string(),
+                ))
+            }
+        };
+
+        match tokio::time::timeout(self.timeout, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(AppError::Plugin(format!(
+                "RPC call to method '{}' timed out after {:?}",
+                method, self.timeout
+            ))),
+        }
+    }
+
     /// Send a JSON-RPC notification (no response expected)
     pub async fn notify(
         &self,

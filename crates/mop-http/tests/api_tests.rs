@@ -695,3 +695,221 @@ async fn test_resources_and_actions_api() {
         .iter()
         .any(|a| a.action == "resource.restart" && a.result == AuditResult::Success));
 }
+
+#[tokio::test]
+async fn test_plugin_api_and_rbac_and_ui_serving() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp_dir.path().join("plugins");
+    let run_dir = tmp_dir.path().join("run");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    std::fs::create_dir_all(&run_dir).unwrap();
+
+    // Create hello plugin structure
+    let hello_dir = plugins_dir.join("mop.hello").join("0.1.0");
+    let ui_dir = hello_dir.join("ui");
+    std::fs::create_dir_all(&ui_dir).unwrap();
+
+    let manifest_toml = r#"
+id = "mop.hello"
+name = "Hello Plugin"
+version = "0.1.0"
+api_version = "1"
+
+[ui]
+entry = "ui/index.js"
+element = "mop-plugin-hello"
+
+[capabilities]
+jobs = ["hello.ping"]
+"#;
+    std::fs::write(hello_dir.join("plugin.toml"), manifest_toml).unwrap();
+    std::fs::write(ui_dir.join("index.js"), "console.log('hello');").unwrap();
+
+    let mut config = Config::default();
+    config.plugins.dir = plugins_dir;
+    config.plugins.run_dir = run_dir;
+
+    let (app, _pool, _tmp) = setup_custom_app(config).await;
+
+    // 1. Initial setup admin
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/register")
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "admin",
+                "password": "Password12345!"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let setup_res = app.clone().oneshot(setup_req).await.unwrap();
+    assert_eq!(setup_res.status(), StatusCode::CREATED);
+    let admin_cookie = setup_res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 2. Create viewer user
+    let create_viewer_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/users")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "viewer",
+                "password": "Password12345!",
+                "role": "viewer"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let create_viewer_res = app.clone().oneshot(create_viewer_req).await.unwrap();
+    assert_eq!(create_viewer_res.status(), StatusCode::CREATED);
+
+    // Login as viewer
+    let viewer_login_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "viewer",
+                "password": "Password12345!"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let viewer_login_res = app.clone().oneshot(viewer_login_req).await.unwrap();
+    assert_eq!(viewer_login_res.status(), StatusCode::OK);
+    let viewer_cookie = viewer_login_res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 3. GET /api/v1/plugins (Viewer can list plugins)
+    let list_req = Request::builder()
+        .uri("/api/v1/plugins")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let list_res = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let body = list_res.into_body().collect().await.unwrap().to_bytes();
+    let plugins_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(plugins_json.as_array().unwrap().len(), 1);
+    assert_eq!(plugins_json[0]["id"], "mop.hello");
+
+    // 4. PUT /api/v1/plugins/{id}/settings (Admin only, viewer gets 403)
+    let viewer_settings_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/plugins/mop.hello/settings")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "settings": { "greeting": "Bonjour" }
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let viewer_settings_res = app.clone().oneshot(viewer_settings_req).await.unwrap();
+    assert_eq!(viewer_settings_res.status(), StatusCode::FORBIDDEN);
+
+    let admin_settings_req = Request::builder()
+        .method("PUT")
+        .uri("/api/v1/plugins/mop.hello/settings")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "settings": { "greeting": "Bonjour" }
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let admin_settings_res = app.clone().oneshot(admin_settings_req).await.unwrap();
+    assert_eq!(admin_settings_res.status(), StatusCode::OK);
+
+    // 5. GET /api/v1/plugins/{id}/settings/diff
+    let diff_req = Request::builder()
+        .uri("/api/v1/plugins/mop.hello/settings/diff")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let diff_res = app.clone().oneshot(diff_req).await.unwrap();
+    assert_eq!(diff_res.status(), StatusCode::OK);
+    let diff_body = diff_res.into_body().collect().await.unwrap().to_bytes();
+    let diff_json: serde_json::Value = serde_json::from_slice(&diff_body).unwrap();
+    assert_eq!(diff_json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(diff_json["items"][0]["key"], "greeting");
+
+    // 6. POST /api/v1/plugins/{id}/settings/apply
+    let apply_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.hello/settings/apply")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let apply_res = app.clone().oneshot(apply_req).await.unwrap();
+    assert_eq!(apply_res.status(), StatusCode::OK);
+
+    // 7. POST /api/v1/plugins/{id}/rpc (RBAC check for job.submit)
+    let viewer_rpc_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.hello/rpc")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "job.submit",
+                "params": { "job_type": "hello.ping" },
+                "id": 1
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let viewer_rpc_res = app.clone().oneshot(viewer_rpc_req).await.unwrap();
+    assert_eq!(viewer_rpc_res.status(), StatusCode::FORBIDDEN);
+
+    // 8. GET /api/v1/plugins/{id}/ui/index.js (Static asset serving)
+    let ui_req = Request::builder()
+        .uri("/api/v1/plugins/mop.hello/ui/index.js")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let ui_res = app.clone().oneshot(ui_req).await.unwrap();
+    assert_eq!(ui_res.status(), StatusCode::OK);
+    let content_type = ui_res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(content_type.contains("javascript"));
+
+    // 9. Path traversal protection: GET /api/v1/plugins/{id}/ui/../plugin.toml -> 403 Forbidden
+    let traversal_req = Request::builder()
+        .uri("/api/v1/plugins/mop.hello/ui/..%2Fplugin.toml")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let traversal_res = app.clone().oneshot(traversal_req).await.unwrap();
+    assert_eq!(traversal_res.status(), StatusCode::FORBIDDEN);
+}

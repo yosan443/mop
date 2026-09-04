@@ -1,0 +1,15 @@
+id = "mop.hello"
+name = "Hello Plugin"
+version = "0.1.0"
+api_version = "1"
+description = "Sample first-party plugin for mop"
+
+[ui]
+entry = "ui/index.js"
+element = "mop-plugin-hello"
+
+[backend]
+exec = "mop-plugin-hello"
+
+[capabilities]
+jobs = ["hello.ping"]

@@ -31,6 +31,7 @@ pub struct AppState {
     pub active_resource_locks: Arc<Mutex<HashSet<String>>>,
     pub collector: Arc<dyn ResourceCollector>,
     pub job_service: JobService,
+    pub plugin_supervisor: mop_plugin::supervisor::PluginSupervisor,
 }
 
 #[derive(Debug, Deserialize)]

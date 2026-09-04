@@ -11,6 +11,8 @@ mop-db = { workspace = true }
 mop-auth = { workspace = true }
 mop-watch = { workspace = true }
 mop-jobs = { workspace = true }
+mop-plugin = { workspace = true }
+mop-plugin-sdk = { workspace = true }
 axum = { workspace = true }
 axum-login = { workspace = true }
 tower = { workspace = true }

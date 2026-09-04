@@ -14,7 +14,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
-use zbus::zvariant::Value;
 
 pub const DEFAULT_CRASH_LIMIT: usize = 5;
 pub const DEFAULT_CRASH_WINDOW: Duration = Duration::from_secs(300);
@@ -27,7 +26,6 @@ struct RunningPluginProcess {
     socket_path: PathBuf,
     #[allow(dead_code)]
     manifest: PluginManifest,
-    crash_timestamps: VecDeque<Instant>,
 }
 
 #[derive(Clone)]
@@ -44,6 +42,7 @@ pub struct PluginSupervisor {
     pid_to_plugin: Arc<RwLock<HashMap<u32, String>>>,
     host_handler: HostNotificationHandler,
     host_listener_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    crash_history: Arc<RwLock<HashMap<String, VecDeque<Instant>>>>,
     crash_limit: usize,
     crash_window: Duration,
     use_systemd_transient: bool,
@@ -76,6 +75,7 @@ impl PluginSupervisor {
             pid_to_plugin,
             host_handler,
             host_listener_handle: Arc::new(Mutex::new(None)),
+            crash_history: Arc::new(RwLock::new(HashMap::new())),
             crash_limit: DEFAULT_CRASH_LIMIT,
             crash_window: DEFAULT_CRASH_WINDOW,
             use_systemd_transient: false, // Default to direct execution for dev/tests, can be enabled on Linux
@@ -111,6 +111,12 @@ impl PluginSupervisor {
     }
 
     /// Unregister a PID from plugin_id mapping
+    pub fn plugin_socket_path(&self, plugin_id: &str) -> PathBuf {
+        self.run_dir
+            .join("plugins")
+            .join(format!("{plugin_id}.sock"))
+    }
+
     pub async fn unregister_plugin_pid(&self, pid: u32) {
         self.host_handler.unregister_plugin_pid(pid).await;
     }
@@ -461,7 +467,7 @@ impl PluginSupervisor {
                 self.unregister_plugin_pid(pid).await;
             }
             return Err(AppError::Plugin(format!(
-                "Plugin socket {} did not appear within 5 seconds",
+                "Plugin socket {} was not ready within 5 seconds",
                 plugin_socket.display()
             )));
         }
@@ -495,16 +501,6 @@ impl PluginSupervisor {
             .update_state(plugin_id, PluginState::Running)
             .await?;
 
-        // Maintain existing crash timestamps if re-spawning
-        let existing_crashes = {
-            let procs = self.processes.read().await;
-            if let Some(p) = procs.get(plugin_id) {
-                p.lock().await.crash_timestamps.clone()
-            } else {
-                VecDeque::new()
-            }
-        };
-
         let running_proc = RunningPluginProcess {
             child: child_proc,
             pid: spawned_pid,
@@ -512,7 +508,6 @@ impl PluginSupervisor {
             unit_name: transient_unit_name,
             socket_path: plugin_socket,
             manifest: manifest.clone(),
-            crash_timestamps: existing_crashes,
         };
 
         {
@@ -530,84 +525,83 @@ impl PluginSupervisor {
     async fn start_transient_unit(
         &self,
         plugin_id: &str,
-        exec_path: &Path,
-        working_dir: &Path,
-        plugin_socket: &Path,
-        host_socket: &Path,
+        exec_path: &std::path::Path,
+        plugin_base_dir: &std::path::Path,
+        plugin_socket: &std::path::Path,
+        host_socket: &std::path::Path,
     ) -> Result<(String, Option<u32>), AppError> {
+        let unit_name = format!("mop-plugin-{plugin_id}.service");
         let conn = zbus::Connection::system()
             .await
             .map_err(|e| AppError::Internal(format!("Failed to connect to system D-Bus: {e}")))?;
 
-        let unit_name = format!("mop-plugin-{plugin_id}.service");
         let exec_str = exec_path.to_string_lossy().to_string();
-        let workdir_str = working_dir.to_string_lossy().to_string();
+        let working_dir_str = plugin_base_dir.to_string_lossy().to_string();
+        let socket_env = format!("MOP_PLUGIN_SOCKET={}", plugin_socket.display());
+        let host_env = format!("MOP_HOST_SOCKET={}", host_socket.display());
+        let id_env = format!("MOP_PLUGIN_ID={plugin_id}");
+        let api_env = "MOP_API_VERSION=1".to_string();
 
-        let env_vars = vec![
-            format!("MOP_PLUGIN_ID={plugin_id}"),
-            format!("MOP_PLUGIN_SOCKET={}", plugin_socket.display()),
-            format!("MOP_HOST_SOCKET={}", host_socket.display()),
-            "MOP_API_VERSION=1".to_string(),
-        ];
+        let desc = format!("mop plugin {plugin_id}");
+        let user_name = format!("mop-plugin-{plugin_id}");
 
-        let exec_start_tuple = (exec_str.clone(), vec![exec_str], false);
-        let exec_start_vec = vec![exec_start_tuple];
-
-        let properties: Vec<(&str, Value)> = vec![
+        let properties: Vec<(&str, zbus::zvariant::Value)> = vec![
+            ("Description", desc.as_str().into()),
+            ("Type", "simple".into()),
+            ("WorkingDirectory", working_dir_str.as_str().into()),
             (
-                "Description",
-                Value::from(format!("mop plugin {plugin_id}")),
+                "Environment",
+                vec![
+                    socket_env.as_str(),
+                    host_env.as_str(),
+                    id_env.as_str(),
+                    api_env.as_str(),
+                ]
+                .into(),
             ),
-            ("ExecStart", Value::from(exec_start_vec)),
-            ("WorkingDirectory", Value::from(workdir_str)),
-            ("DynamicUser", Value::from(true)),
-            ("User", Value::from(format!("mop-plugin-{plugin_id}"))),
-            ("Environment", Value::from(env_vars)),
-            ("StandardOutput", Value::from("journal")),
-            ("StandardError", Value::from("journal")),
-            ("Restart", Value::from("no")),
+            (
+                "ExecStart",
+                vec![(
+                    exec_str.as_str(),
+                    vec![exec_str.as_str()],
+                    false, // don't ignore failure
+                )]
+                .into(),
+            ),
+            ("DynamicUser", true.into()),
+            ("User", user_name.as_str().into()),
+            ("Restart", "no".into()),
         ];
 
-        let aux: Vec<(&str, Vec<(&str, Value)>)> = Vec::new();
-
-        let mode = "replace";
-        let _: zbus::zvariant::OwnedObjectPath = conn
+        let job: zbus::zvariant::OwnedObjectPath = conn
             .call_method(
                 Some("org.freedesktop.systemd1"),
                 "/org/freedesktop/systemd1",
                 Some("org.freedesktop.systemd1.Manager"),
                 "StartTransientUnit",
-                &(unit_name.as_str(), mode, properties, aux),
+                &(
+                    &unit_name,
+                    "replace",
+                    properties,
+                    Vec::<(&str, Vec<(&str, zbus::zvariant::Value)>)>::new(),
+                ),
             )
             .await
-            .map_err(|e| AppError::Internal(format!("StartTransientUnit failed: {e}")))?
+            .map_err(|e| AppError::Internal(format!("D-Bus StartTransientUnit call failed: {e}")))?
             .body()
             .deserialize()
-            .map_err(|e| AppError::Internal(format!("Failed to deserialize response: {e}")))?;
+            .map_err(|e| AppError::Internal(format!("Failed to deserialize job path: {e}")))?;
 
-        // Try getting MainPID
-        let path = format!(
-            "/org/freedesktop/systemd1/unit/{}",
-            unit_name.replace('-', "_2d").replace('.', "_2e")
+        info!(
+            "Started transient unit '{}' with job path '{}'",
+            unit_name,
+            job.as_str()
         );
-        let pid = conn
-            .call_method(
-                Some("org.freedesktop.systemd1"),
-                path.as_str(),
-                Some("org.freedesktop.DBus.Properties"),
-                "Get",
-                &("org.freedesktop.systemd1.Service", "MainPID"),
-            )
-            .await
-            .and_then(|r| r.body().deserialize::<zbus::zvariant::OwnedValue>())
-            .ok()
-            .and_then(|v| v.downcast_ref::<u32>().ok())
-            .filter(|&p| p > 0);
 
-        Ok((unit_name, pid))
+        Ok((unit_name, None))
     }
 
-    /// Stop the plugin process gracefully with a shutdown RPC call and fallback to SIGTERM/SIGKILL or StopUnit
+    /// Stop a running plugin process or systemd transient unit
     pub async fn stop_plugin_process(&self, plugin_id: &str) -> Result<(), AppError> {
         let proc_mutex = {
             let mut procs = self.processes.write().await;
@@ -677,12 +671,40 @@ impl PluginSupervisor {
         Ok(UnixRpcClient::new(&proc.socket_path))
     }
 
+    async fn record_crash(&self, plugin_id: &str) -> usize {
+        let mut history = self.crash_history.write().await;
+        let deque = history.entry(plugin_id.to_string()).or_default();
+        let now = Instant::now();
+        deque.push_back(now);
+        while let Some(front) = deque.front() {
+            if now.duration_since(*front) > self.crash_window {
+                deque.pop_front();
+            } else {
+                break;
+            }
+        }
+        deque.len()
+    }
+
+    async fn auto_disable(&self, plugin_id: &str) {
+        error!(
+            "Plugin '{}' reached crash limit ({} crashes within {:?}), automatically disabling",
+            plugin_id, self.crash_limit, self.crash_window
+        );
+        let _ = self
+            .plugin_repo
+            .update_state(plugin_id, PluginState::Disabled)
+            .await;
+        let _ = self.plugin_repo.set_enabled(plugin_id, false).await;
+        let _ = self.stop_plugin_process(plugin_id).await;
+    }
+
     /// Spawn a task to monitor the process for unexpected exits, handle backoff auto-restart, and enforce crash_limit (5 / 300s)
     fn spawn_process_monitor(&self, plugin_id: String, manifest: PluginManifest) {
         let supervisor = self.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
 
                 let (is_running, exit_status) = {
                     let procs = supervisor.processes.read().await;
@@ -710,88 +732,77 @@ impl PluginSupervisor {
                         plugin_id, exit_status
                     );
 
-                    let (auto_disabled, crash_count) = {
+                    // Clean up dead child and PID
+                    {
                         let procs = supervisor.processes.read().await;
-                        let Some(proc_mutex) = procs.get(&plugin_id) else {
-                            break;
-                        };
-                        let mut proc = proc_mutex.lock().await;
-
-                        // Unregister dead PID
-                        if let Some(pid) = proc.pid {
-                            supervisor.unregister_plugin_pid(pid).await;
-                        }
-
-                        let now = Instant::now();
-                        proc.crash_timestamps.push_back(now);
-
-                        // Prune crashes older than crash_window
-                        while let Some(front) = proc.crash_timestamps.front() {
-                            if now.duration_since(*front) > supervisor.crash_window {
-                                proc.crash_timestamps.pop_front();
-                            } else {
-                                break;
+                        if let Some(proc_mutex) = procs.get(&plugin_id) {
+                            let mut proc = proc_mutex.lock().await;
+                            let _ = proc.child.take();
+                            if let Some(pid) = proc.pid.take() {
+                                supervisor.unregister_plugin_pid(pid).await;
                             }
                         }
+                    }
 
-                        let count = proc.crash_timestamps.len();
-                        info!(
-                            "Plugin '{}' crash count in window: {} / {}",
-                            plugin_id, count, supervisor.crash_limit
-                        );
+                    let crash_count = supervisor.record_crash(&plugin_id).await;
+                    info!(
+                        "Plugin '{}' crash count in window: {} / {}",
+                        plugin_id, crash_count, supervisor.crash_limit
+                    );
 
-                        (count >= supervisor.crash_limit, count)
-                    };
-
-                    if auto_disabled {
-                        error!(
-                            "Plugin '{}' reached crash limit ({} crashes within {:?}), automatically disabling",
-                            plugin_id, supervisor.crash_limit, supervisor.crash_window
-                        );
-                        let _ = supervisor
-                            .plugin_repo
-                            .update_state(&plugin_id, PluginState::Disabled)
-                            .await;
-                        let _ = supervisor.plugin_repo.set_enabled(&plugin_id, false).await;
-                        let _ = supervisor.stop_plugin_process(&plugin_id).await;
+                    if crash_count >= supervisor.crash_limit {
+                        supervisor.auto_disable(&plugin_id).await;
                         break;
-                    } else {
-                        let _ = supervisor
-                            .plugin_repo
-                            .update_state(&plugin_id, PluginState::Degraded)
-                            .await;
+                    }
 
-                        // Check if plugin is still enabled before backoff restart
-                        let is_enabled = supervisor
-                            .plugin_repo
-                            .find_by_id(&plugin_id)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|p| p.enabled)
-                            .unwrap_or(false);
+                    let _ = supervisor
+                        .plugin_repo
+                        .update_state(&plugin_id, PluginState::Degraded)
+                        .await;
 
-                        if !is_enabled {
+                    // Check if plugin is still enabled before backoff restart
+                    let is_enabled = supervisor
+                        .plugin_repo
+                        .find_by_id(&plugin_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|p| p.enabled)
+                        .unwrap_or(false);
+
+                    if !is_enabled {
+                        break;
+                    }
+
+                    // Backoff before restarting
+                    let backoff_ms = std::cmp::min(crash_count as u64 * 50, 500);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+
+                    // Check enabled again after backoff
+                    let is_enabled = supervisor
+                        .plugin_repo
+                        .find_by_id(&plugin_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|p| p.enabled)
+                        .unwrap_or(false);
+
+                    if !is_enabled {
+                        break;
+                    }
+
+                    // Attempt restart
+                    if let Err(e) = supervisor.start_plugin_process(&plugin_id, &manifest).await {
+                        warn!("Failed to restart plugin '{}': {e}", plugin_id);
+                        let fail_count = supervisor.record_crash(&plugin_id).await;
+                        if fail_count >= supervisor.crash_limit {
+                            supervisor.auto_disable(&plugin_id).await;
                             break;
                         }
-
-                        // Backoff before restarting
-                        let backoff_ms = std::cmp::min(crash_count as u64 * 300, 2000);
-                        info!(
-                            "Restarting plugin '{}' after backoff of {}ms...",
-                            plugin_id, backoff_ms
-                        );
-                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-
-                        if let Err(e) = supervisor.start_plugin_process(&plugin_id, &manifest).await
-                        {
-                            error!(
-                                "Failed to restart plugin '{}' during crash recovery: {e}",
-                                plugin_id
-                            );
-                        }
-
-                        break; // The new process monitor has been spawned by start_plugin_process
+                    } else {
+                        // Successfully started new process; a new monitor was spawned
+                        break;
                     }
                 }
             }

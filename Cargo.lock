@@ -1583,6 +1583,8 @@ dependencies = [
  "mop-core",
  "mop-db",
  "mop-jobs",
+ "mop-plugin",
+ "mop-plugin-sdk",
  "mop-watch",
  "rust-embed",
  "serde",
@@ -1633,6 +1635,20 @@ dependencies = [
  "toml",
  "tracing",
  "zbus",
+]
+
+[[package]]
+name = "mop-plugin-hello"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "mop-plugin-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
