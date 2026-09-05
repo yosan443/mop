@@ -33,7 +33,7 @@ systemd サービスや Docker コンテナの状態監視・ログ閲覧・操�
 - **Unix Domain Socket 通信**: 共有グループ `mop-ipc` (パーミッション `2770`) 配下のソケットを介し、双方向 JSON-RPC 2.0 で通信。
 - **Capability 認可システム**: プラグインが必要とする権限（ファイルアクセス、ジョブ実行、ホスト通知等）をマニフェストで宣言し、管理者が明示的に承認。
 - **設定ライフサイクル**: Save Draft（下書き保存）→ Diff プレビュー（差分確認）→ Apply Settings（安全な適用）の流れをサポート。
-- **Web UI 拡張**: Vue Custom Element (`ui/index.js`) によるプラグイン専用画面の動的組み込み。
+- **Web UI 拡張**: ホスト Vue に依存しない vanilla Web Components (Custom Element + Shadow DOM、`ui/index.js`) によるプラグイン専用画面の動的組み込み。
 
 ### 5. ファーストパーティプラグイン
 - **`mop.manga` (旧 manga2cbz 移植)**:
@@ -56,7 +56,7 @@ systemd サービスや Docker コンテナの状態監視・ログ閲覧・操�
 flowchart TB
     subgraph Browser ["Web Browser (User)"]
         UI["Vue 3 SPA (HTML5 / TypeScript / Pinia)"]
-        CustomEl["Plugin Custom Elements (Vue Custom Element)"]
+        CustomEl["Plugin UI (Vanilla Web Components: Custom Element + Shadow DOM)"]
     end
 
     subgraph Host ["mop Host Daemon (User: mop)"]
@@ -195,8 +195,8 @@ pnpm build
 cd ..
 
 # 4. Playwright E2E テスト
-cd web
-pnpm test:e2e
+cd e2e
+pnpm test
 cd ..
 
 # 5. パッケージ整合性スモークテスト
@@ -257,8 +257,10 @@ mop はサーバー管理という特権的な領域を扱うため、以下の�
 ├── plugins/
 │   ├── manga/           # mop-plugin-manga (アーカイブ WebP CBZ 変換、ディレクトリ監視)
 │   ├── video/           # mop-plugin-video (FFmpeg HEVC MP4 トランスコード)
+│   ├── common/          # mop-plugin-common (プラグイン間共有クレート: safe_join, アーカイブ処理等)
 │   └── hello/           # サンプルプラグイン
 ├── web/                 # Vue 3 + TypeScript + Vite + Pinia Web フロントエンド
+├── e2e/                 # Playwright E2E テストスイート
 ├── deploy/              # systemd サービス定義、Polkit ルール、deb パッケージング設定
 ├── scripts/             # ビルド、パッケージング、スモークテスト用シェルスクリプト
 └── docs/                # 詳細仕様書 (SPEC.md)、運用マニュアル、移行ガイド
