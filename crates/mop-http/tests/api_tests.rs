@@ -1379,20 +1379,25 @@ async fn test_backup_api_rbac_and_execution() {
     let job_id = create_json["job_id"].as_str().unwrap().to_string();
     assert!(!job_id.is_empty());
 
-    // Give background task a moment to finish backup
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // 7. Verify backup archive was created and appears in list
-    let admin_list_req2 = Request::builder()
-        .uri("/api/v1/backups")
-        .header(header::COOKIE, admin_cookie.clone())
-        .body(Body::empty())
-        .unwrap();
-    let res2 = app.clone().oneshot(admin_list_req2).await.unwrap();
-    assert_eq!(res2.status(), StatusCode::OK);
-    let body2 = res2.into_body().collect().await.unwrap().to_bytes();
-    let list_json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
-    let backups = list_json2["backups"].as_array().unwrap();
+    // Poll until background backup task finishes and archive appears in list
+    let mut backups = Vec::new();
+    for _ in 0..50 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        let admin_list_req2 = Request::builder()
+            .uri("/api/v1/backups")
+            .header(header::COOKIE, admin_cookie.clone())
+            .body(Body::empty())
+            .unwrap();
+        let res2 = app.clone().oneshot(admin_list_req2).await.unwrap();
+        assert_eq!(res2.status(), StatusCode::OK);
+        let body2 = res2.into_body().collect().await.unwrap().to_bytes();
+        let list_json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+        let b = list_json2["backups"].as_array().unwrap().clone();
+        if !b.is_empty() {
+            backups = b;
+            break;
+        }
+    }
     assert_eq!(backups.len(), 1);
     assert!(backups[0]["filename"]
         .as_str()
