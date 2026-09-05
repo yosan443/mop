@@ -12,7 +12,7 @@ use crate::video::{convert_one, VideoConvertOptions, VideoResult};
 /// - Kind::Manga -> skipped; NEVER deleted, NEVER moved
 /// - Kind::Unknown -> ignored; NEVER deleted, NEVER moved
 pub fn process(input: &Path, cfg: &VideoConfig, opts: &VideoConvertOptions) -> VideoResult {
-    let kind = classify(input, 5, true);
+    let kind = classify(input, cfg.manga_image_threshold, cfg.remove_macos_metadata);
 
     match kind {
         Kind::Video => {

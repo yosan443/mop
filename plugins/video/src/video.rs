@@ -86,10 +86,21 @@ pub fn transcode_single_file(
         return Err(format!("ffmpeg failed: {summary}"));
     }
 
-    // Persist temporary transcode to final dest_path
-    tmp_path
-        .persist(dest_path)
-        .map_err(|e| format!("failed to persist output {}: {e}", dest_path.display()))?;
+    // Persist temporary transcode to final dest_path.
+    // Note: tempfile::persist uses rename(2), which is atomic when work_dir and video_dir
+    // reside on the same filesystem. When work_dir and video_dir are on different mount points
+    // or filesystems (cross-device link / EXDEV), fall back to copy + remove.
+    if let Err(persist_err) = tmp_path.persist(dest_path) {
+        let tmp_file_path = &persist_err.path;
+        if let Err(e) = fs::copy(tmp_file_path, dest_path) {
+            let _ = fs::remove_file(tmp_file_path);
+            return Err(format!(
+                "failed to persist output {}: {e} (rename failed: {persist_err})",
+                dest_path.display()
+            ));
+        }
+        let _ = fs::remove_file(tmp_file_path);
+    }
 
     Ok(dest_path.to_path_buf())
 }

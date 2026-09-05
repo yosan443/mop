@@ -35,6 +35,8 @@ pub struct VideoConfig {
     pub delete_original: bool,
     pub overwrite: bool,
     pub scan_on_start: bool,
+    pub manga_image_threshold: usize,
+    pub remove_macos_metadata: bool,
 }
 
 impl Default for VideoConfig {
@@ -49,6 +51,8 @@ impl Default for VideoConfig {
             delete_original: false,
             overwrite: false,
             scan_on_start: true,
+            manga_image_threshold: 5,
+            remove_macos_metadata: true,
         }
     }
 }
@@ -150,6 +154,16 @@ impl VideoConfig {
                     "type": "boolean",
                     "default": true,
                     "description": "Scan watch_dirs on startup for existing videos"
+                },
+                "manga_image_threshold": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Minimum image count to classify archive as manga"
+                },
+                "remove_macos_metadata": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Ignore macOS metadata files when classifying archives"
                 }
             }
         })
@@ -174,5 +188,17 @@ mod tests {
         cfg.watch_dirs = vec![PathBuf::from("/srv/videos/incoming")];
         cfg.video_dir = PathBuf::from("/srv/videos/transcoded"); // disjoint siblings
         assert!(cfg.validate_layout().is_ok());
+    }
+
+    #[test]
+    fn test_config_defaults_and_schema() {
+        let cfg = VideoConfig::default();
+        assert_eq!(cfg.manga_image_threshold, 5);
+        assert!(cfg.remove_macos_metadata);
+
+        let schema = VideoConfig::json_schema();
+        let properties = schema.get("properties").unwrap();
+        assert!(properties.get("manga_image_threshold").is_some());
+        assert!(properties.get("remove_macos_metadata").is_some());
     }
 }

@@ -274,7 +274,14 @@ async fn handle_job_submit(req: RpcRequest, state: &PluginState) -> RpcResponse 
                 run_inspect_job(state_clone, job_id_clone, job_params).await;
             }
             other => {
-                warn!("Unknown job kind '{other}' submitted");
+                warn!("Unknown job_type: {other}");
+                let _ = send_finished(
+                    &state_clone.host_socket,
+                    &job_id_clone,
+                    "failed",
+                    Some(format!("Unknown job_type: {other}")),
+                )
+                .await;
             }
         }
     });
@@ -393,10 +400,10 @@ async fn run_convert_job(
 
     if res.status == "success" {
         let _ = send_progress(&host_socket, &job_id, 100, "Transcode finished".to_string()).await;
-        let _ = send_finished(&host_socket, &job_id, "succeeded", None).await;
+        let _ = send_finished(&host_socket, &job_id, "completed", None).await;
     } else if res.status == "skipped" {
         let _ = send_progress(&host_socket, &job_id, 100, "File skipped".to_string()).await;
-        let _ = send_finished(&host_socket, &job_id, "succeeded", None).await;
+        let _ = send_finished(&host_socket, &job_id, "completed", None).await;
     } else {
         let _ = send_progress(&host_socket, &job_id, 100, "Transcode failed".to_string()).await;
         let _ = send_finished(
@@ -522,7 +529,7 @@ async fn run_batch_job(
         .await;
     }
 
-    let _ = send_finished(&host_socket, &job_id, "succeeded", None).await;
+    let _ = send_finished(&host_socket, &job_id, "completed", None).await;
 }
 
 async fn run_inspect_job(state: PluginState, job_id: String, params: serde_json::Value) {
@@ -579,7 +586,7 @@ async fn run_inspect_job(state: PluginState, job_id: String, params: serde_json:
                 "Inspection completed successfully".to_string(),
             )
             .await;
-            let _ = send_finished(&host_socket, &job_id, "succeeded", None).await;
+            let _ = send_finished(&host_socket, &job_id, "completed", None).await;
         }
         Ok(Err(e)) => {
             let msg = format!("Failed to inspect: {e}");
