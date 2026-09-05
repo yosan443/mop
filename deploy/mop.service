@@ -27,8 +27,8 @@ RestrictRealtime=true
 RestrictNamespaces=true
 LockPersonality=true
 
-# Journal access
-SupplementaryGroups=systemd-journal
+# Journal and IPC socket access
+SupplementaryGroups=systemd-journal mop-ipc
 
 [Install]
 WantedBy=multi-user.target

@@ -3,9 +3,12 @@ set -e
 
 case "$1" in
     configure)
-        # 1. Create mop system user and group if not existing
+        # 1. Create mop system user, mop group, and mop-ipc group if not existing
         if ! getent group mop >/dev/null; then
             addgroup --system mop
+        fi
+        if ! getent group mop-ipc >/dev/null; then
+            addgroup --system mop-ipc
         fi
 
         if ! getent passwd mop >/dev/null; then
@@ -17,7 +20,8 @@ case "$1" in
                 mop
         fi
 
-        # 2. Add mop to systemd-journal group for reading journal logs
+        # Add mop to mop-ipc and systemd-journal groups
+        adduser mop mop-ipc || true
         if getent group systemd-journal >/dev/null; then
             adduser mop systemd-journal || true
         fi

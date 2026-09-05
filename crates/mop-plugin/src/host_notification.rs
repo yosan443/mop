@@ -218,9 +218,11 @@ impl HostNotificationHandler {
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ =
-                std::fs::set_permissions(&self.socket_path, std::fs::Permissions::from_mode(0o660));
+            crate::ipc::ensure_group_and_permissions(
+                &self.socket_path,
+                crate::ipc::MOP_IPC_GROUP,
+                0o660,
+            );
         }
 
         info!(

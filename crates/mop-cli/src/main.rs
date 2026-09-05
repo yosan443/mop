@@ -42,6 +42,9 @@ enum Commands {
 
         #[arg(long, help = "Plugins run directory override (sockets)")]
         plugins_run_dir: Option<PathBuf>,
+
+        #[arg(long, help = "Enable systemd transient units for plugins")]
+        systemd_transient: bool,
     },
 
     #[command(about = "Generate polkit rules JavaScript from allowlist (SPEC.md §9.1)")]
@@ -95,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fake_backend: false,
         plugins_dir: None,
         plugins_run_dir: None,
+        systemd_transient: false,
     }) {
         Commands::Serve {
             bind,
@@ -102,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             fake_backend,
             plugins_dir,
             plugins_run_dir,
+            systemd_transient,
         } => {
             if let Some(b) = bind {
                 config.server.bind = b;
@@ -117,6 +122,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             if let Some(r) = plugins_run_dir {
                 config.plugins.run_dir = r;
+            }
+            if systemd_transient {
+                config.plugins.use_systemd_transient = true;
             }
 
             run_server(config).await?;
@@ -200,13 +208,24 @@ fn generate_polkit_rules(config: &Config) -> String {
 // Generated automatically from mop config.toml allowlist
 
 polkit.addRule(function(action, subject) {{
-    if (action.id == "org.freedesktop.systemd1.manage-units" &&
-        subject.user == "mop") {{
-        
+    if (subject.user !== "mop") {{
+        return;
+    }}
+
+    // 1. Allow creating and managing transient plugin units (SPEC.md §9.1)
+    if (action.id == "org.freedesktop.systemd1.manage-unit-files") {{
+        return polkit.Result.YES;
+    }}
+
+    // 2. Allow controlling allowlisted services and mop plugin units
+    if (action.id == "org.freedesktop.systemd1.manage-units") {{
         var unit = action.lookup("unit");
         var allowedUnits = {units_json};
 
-        if (allowedUnits.indexOf(unit) >= 0) {{
+        // Note: unit lookup may be null during some systemd StartTransientUnit transitions.
+        // If unit is specified, strictly check allowlist or mop-plugin- prefix;
+        // if unspecified, allow subject.user == "mop" as fallback.
+        if (!unit || allowedUnits.indexOf(unit) >= 0 || (unit && unit.indexOf("mop-plugin-") === 0)) {{
             return polkit.Result.YES;
         }}
     }}
@@ -261,4 +280,25 @@ async fn run_server(config: Config) -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(format!("Server error: {e}")))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_polkit_rules_contains_transient_and_plugin_rules() {
+        let mut config = Config::default();
+        config.resources.systemd.units =
+            vec!["nginx.service".to_string(), "caddy.service".to_string()];
+
+        let rules = generate_polkit_rules(&config);
+
+        assert!(rules.contains("org.freedesktop.systemd1.manage-unit-files"));
+        assert!(rules.contains("org.freedesktop.systemd1.manage-units"));
+        assert!(rules.contains("nginx.service"));
+        assert!(rules.contains("caddy.service"));
+        assert!(rules.contains("mop-plugin-"));
+        assert!(rules.contains("subject.user !== \"mop\""));
+    }
 }

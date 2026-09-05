@@ -125,10 +125,19 @@ impl PluginSupervisor {
         self.host_handler.unregister_plugin_pid(pid).await;
     }
 
-    /// Ensure the single host.sock listener is active
+    /// Ensure the single host.sock listener is active and plugin socket directory is prepared
     pub async fn ensure_host_listener(&self) -> Result<(), AppError> {
         let mut handle_guard = self.host_listener_handle.lock().await;
         if handle_guard.is_none() {
+            let plugins_run_dir = self.run_dir.join("plugins");
+            let _ = std::fs::create_dir_all(&plugins_run_dir);
+            #[cfg(unix)]
+            crate::ipc::ensure_group_and_permissions(
+                &plugins_run_dir,
+                crate::ipc::MOP_IPC_GROUP,
+                0o2770,
+            );
+
             let handle = self.host_handler.start_host_listener().await?;
             *handle_guard = Some(handle);
         }
@@ -368,6 +377,12 @@ impl PluginSupervisor {
 
         let plugins_run_dir = self.run_dir.join("plugins");
         let _ = std::fs::create_dir_all(&plugins_run_dir);
+        #[cfg(unix)]
+        crate::ipc::ensure_group_and_permissions(
+            &plugins_run_dir,
+            crate::ipc::MOP_IPC_GROUP,
+            0o2770,
+        );
 
         let plugin_socket = plugins_run_dir.join(format!("{plugin_id}.sock"));
         let host_socket = self.run_dir.join("host.sock");
@@ -573,7 +588,7 @@ impl PluginSupervisor {
         let desc = format!("mop plugin {plugin_id}");
         let user_name = format!("mop-plugin-{plugin_id}");
 
-        let properties: Vec<(&str, zbus::zvariant::Value)> = vec![
+        let mut properties: Vec<(&str, zbus::zvariant::Value)> = vec![
             ("Description", desc.as_str().into()),
             ("Type", "simple".into()),
             ("WorkingDirectory", working_dir_str.as_str().into()),
@@ -601,6 +616,14 @@ impl PluginSupervisor {
             ("Restart", "no".into()),
         ];
 
+        // Attach mop-ipc supplementary group if present in system
+        if crate::ipc::get_group_gid(crate::ipc::MOP_IPC_GROUP).is_some() {
+            properties.push((
+                "SupplementaryGroups",
+                vec![crate::ipc::MOP_IPC_GROUP].into(),
+            ));
+        }
+
         let job: zbus::zvariant::OwnedObjectPath = conn
             .call_method(
                 Some("org.freedesktop.systemd1"),
@@ -626,10 +649,80 @@ impl PluginSupervisor {
             job.as_str()
         );
 
-        // NOTE(M5/M6): MainPID retrieval returns None in M4 as transient units are disabled by default.
-        // Before enabling transient mode in production (M5/M6), restore GetUnit / ActiveState polling
-        // to retrieve the active MainPID so that host.sock SO_PEERCRED verification succeeds.
-        Ok((unit_name, None))
+        // Poll GetUnit / ActiveState / MainPID
+        let mut main_pid = None;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+        let mut poll_interval = tokio::time::interval(std::time::Duration::from_millis(50));
+
+        while start.elapsed() < timeout {
+            poll_interval.tick().await;
+
+            let unit_path_res: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                .call_method(
+                    Some("org.freedesktop.systemd1"),
+                    "/org/freedesktop/systemd1",
+                    Some("org.freedesktop.systemd1.Manager"),
+                    "GetUnit",
+                    &(&unit_name,),
+                )
+                .await
+                .and_then(|r| r.body().deserialize());
+
+            let Ok(unit_path) = unit_path_res else {
+                continue;
+            };
+
+            // Check ActiveState
+            if let Ok(reply) = conn
+                .call_method(
+                    Some("org.freedesktop.systemd1"),
+                    unit_path.as_ref(),
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &("org.freedesktop.systemd1.Unit", "ActiveState"),
+                )
+                .await
+            {
+                if let Ok(val) = reply.body().deserialize::<zbus::zvariant::OwnedValue>() {
+                    let state = val.to_string();
+                    let trimmed = state.trim_matches('"');
+                    if trimmed == "failed" {
+                        return Err(AppError::Plugin(format!(
+                            "Transient unit '{unit_name}' entered failed state"
+                        )));
+                    }
+                }
+            }
+
+            // Check MainPID
+            if let Ok(reply) = conn
+                .call_method(
+                    Some("org.freedesktop.systemd1"),
+                    unit_path.as_ref(),
+                    Some("org.freedesktop.DBus.Properties"),
+                    "Get",
+                    &("org.freedesktop.systemd1.Service", "MainPID"),
+                )
+                .await
+            {
+                if let Ok(val) = reply.body().deserialize::<zbus::zvariant::OwnedValue>() {
+                    if let Ok(pid) = val.to_string().trim_matches('"').parse::<u32>() {
+                        if pid > 0 {
+                            info!("Retrieved MainPID {pid} for transient unit '{unit_name}'");
+                            main_pid = Some(pid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if main_pid.is_none() {
+            warn!("Timed out waiting for MainPID of transient unit '{unit_name}'");
+        }
+
+        Ok((unit_name, main_pid))
     }
 
     /// Stop a running plugin process or systemd transient unit
