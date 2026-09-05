@@ -34,7 +34,15 @@ POLKIT_RULES_DIR="/etc/polkit-1/rules.d"
 mkdir -p "$POLKIT_RULES_DIR"
 RULE_FILE="${POLKIT_RULES_DIR}/50-mop.rules"
 
-cargo run -p mop-cli -- polkit-rules --output "$RULE_FILE"
+if [ -x "./target/release/mop" ]; then
+    ./target/release/mop polkit-rules --output "$RULE_FILE"
+elif [ -x "./target/debug/mop" ]; then
+    ./target/debug/mop polkit-rules --output "$RULE_FILE"
+elif command -v mop >/dev/null 2>&1; then
+    mop polkit-rules --output "$RULE_FILE"
+else
+    cargo run -p mop-cli -- polkit-rules --output "$RULE_FILE"
+fi
 chmod 0644 "$RULE_FILE"
 echo "Generated polkit rule at $RULE_FILE:"
 cat "$RULE_FILE"
@@ -55,29 +63,28 @@ chmod 0755 "$RUN_DIR"
 chown mop:mop-ipc "$PLUGINS_RUN_DIR"
 chmod 2770 "$PLUGINS_RUN_DIR"
 
-# Create dummy host.sock with 0660 mop:mop-ipc
 HOST_SOCK="${RUN_DIR}/host.sock"
 rm -f "$HOST_SOCK"
-python3 -c "import socket; s = socket.socket(socket.AF_UNIX); s.bind('$HOST_SOCK')"
-chown mop:mop-ipc "$HOST_SOCK"
-chmod 0660 "$HOST_SOCK"
 
 echo "Directory permissions:"
-ls -ld "$RUN_DIR" "$PLUGINS_RUN_DIR" "$HOST_SOCK"
+ls -ld "$RUN_DIR" "$PLUGINS_RUN_DIR"
 
 echo "=== [5/6] Testing Transient Unit with DynamicUser & SupplementaryGroups ==="
-TEST_UNIT="mop-plugin-mop.test.service"
+TEST_UNIT="mop-plugin-mop-test.service"
 systemctl stop "$TEST_UNIT" 2>/dev/null || true
+systemctl reset-failed "$TEST_UNIT" 2>/dev/null || true
+
+SLEEP_BIN="$(command -v sleep)"
 
 # Launch transient unit as user mop-plugin-test with DynamicUser=yes and SupplementaryGroups=mop-ipc
 systemd-run \
     --unit="$TEST_UNIT" \
     --description="mop test transient unit" \
     --property="DynamicUser=yes" \
-    --property="User=mop-plugin-mop.test" \
+    --property="User=mop-plugin-test" \
     --property="SupplementaryGroups=mop-ipc" \
     --property="WorkingDirectory=/tmp" \
-    sleep 30
+    "$SLEEP_BIN" 30
 
 echo "Transient unit started: $TEST_UNIT"
 sleep 1
@@ -95,17 +102,37 @@ if [ -z "$MAIN_PID" ] || [ "$MAIN_PID" -le 0 ]; then
 fi
 
 echo "=== [6/6] Testing Plugin Socket Access & Group Inheritance ==="
-# Test that process running inside transient unit can write to $HOST_SOCK
+# Start a listening server on $HOST_SOCK (0660 mop:mop-ipc)
+rm -f "$HOST_SOCK"
+python3 -c "import socket, time
+s = socket.socket(socket.AF_UNIX)
+s.bind('$HOST_SOCK')
+s.listen(5)
+time.sleep(10)
+" &
+LISTENER_PID=$!
+sleep 1
+chown mop:mop-ipc "$HOST_SOCK"
+chmod 0660 "$HOST_SOCK"
+ls -l "$HOST_SOCK"
+
+systemctl stop "mop-plugin-ipc-check.service" 2>/dev/null || true
+systemctl reset-failed "mop-plugin-ipc-check.service" 2>/dev/null || true
+
+# Test that process running inside transient unit with SupplementaryGroups=mop-ipc can connect to $HOST_SOCK
+PYTHON_BIN="$(command -v python3)"
 systemd-run \
     --unit="mop-plugin-ipc-check.service" \
     --property="DynamicUser=yes" \
     --property="SupplementaryGroups=mop-ipc" \
     --wait \
-    python3 -c "import socket; s = socket.socket(socket.AF_UNIX); s.connect('$HOST_SOCK'); print('SUCCESS: Connected to host.sock from DynamicUser in mop-ipc group')"
+    "$PYTHON_BIN" -c "import socket; s = socket.socket(socket.AF_UNIX); s.connect('$HOST_SOCK'); print('SUCCESS: Connected to host.sock from DynamicUser in mop-ipc group')"
 
-# Clean up test units
+# Clean up test units and background listener
+kill $LISTENER_PID 2>/dev/null || true
 systemctl stop "$TEST_UNIT" 2>/dev/null || true
 systemctl stop "mop-plugin-ipc-check.service" 2>/dev/null || true
+systemctl reset-failed "$TEST_UNIT" "mop-plugin-ipc-check.service" 2>/dev/null || true
 rm -f "$HOST_SOCK"
 
 echo "=== ALL TRANSIENT SYSTEMD & POLKIT TESTS PASSED ==="

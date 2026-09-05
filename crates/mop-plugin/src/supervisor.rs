@@ -603,7 +603,11 @@ impl PluginSupervisor {
         let api_env = "MOP_API_VERSION=1".to_string();
 
         let desc = format!("mop plugin {plugin_id}");
-        let user_name = format!("mop-plugin-{plugin_id}");
+        let sanitized_id = plugin_id
+            .strip_prefix("mop.")
+            .unwrap_or(plugin_id)
+            .replace('.', "-");
+        let user_name = format!("mop-plugin-{sanitized_id}");
 
         let mut properties: Vec<(&str, zbus::zvariant::Value)> = vec![
             ("Description", desc.as_str().into()),
