@@ -14,7 +14,8 @@ RestartSec=5s
 # State and Runtime Directories
 StateDirectory=mop
 RuntimeDirectory=mop
-RuntimeDirectoryMode=0755
+RuntimeDirectoryGroup=mop-ipc
+RuntimeDirectoryMode=0750
 
 # Hardening Directives (SPEC.md §5)
 NoNewPrivileges=true
@@ -26,6 +27,7 @@ ProtectControlGroups=true
 RestrictRealtime=true
 RestrictNamespaces=true
 LockPersonality=true
+ReadWritePaths=/var/lib/mop /etc/mop
 
 # Journal and IPC socket access
 SupplementaryGroups=systemd-journal mop-ipc

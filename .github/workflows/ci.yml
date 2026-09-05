@@ -132,3 +132,38 @@ jobs:
         run: |
           cd e2e
           pnpm test
+
+  packaging-and-smoke-tests:
+    name: Package Build & Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsystemd-dev libarchive-dev libvips-dev ffmpeg dpkg-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Build Debian Packages
+        run: ./scripts/build-deb.sh
+
+      - name: Build Standalone Tarball
+        run: ./scripts/build-tarball.sh
+
+      - name: Run Package Smoke Test
+        run: ./scripts/smoke-test-package.sh
+
