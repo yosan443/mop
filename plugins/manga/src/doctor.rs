@@ -1,7 +1,30 @@
 use mop_plugin_sdk::{DoctorCheck, DoctorResult};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use crate::config::MangaConfig;
+
+static VIPS_APP: OnceLock<Result<&'static libvips::VipsApp, String>> = OnceLock::new();
+
+/// Set the globally held VipsApp instance created at startup.
+pub fn set_vips_app(app_res: Result<&'static libvips::VipsApp, String>) {
+    let _ = VIPS_APP.set(app_res);
+}
+
+/// Retrieve the globally held VipsApp instance or initialize it once if not yet set.
+pub fn get_vips_app() -> Result<&'static libvips::VipsApp, &'static str> {
+    let res = VIPS_APP.get_or_init(|| match libvips::VipsApp::new("mop-plugin-manga", false) {
+        Ok(app) => {
+            let leaked = Box::leak(Box::new(app));
+            Ok(leaked)
+        }
+        Err(e) => Err(e.to_string()),
+    });
+    match res {
+        Ok(app) => Ok(*app),
+        Err(e) => Err(e.as_str()),
+    }
+}
 
 pub fn doctor(cfg: &MangaConfig) -> DoctorResult {
     let mut checks = Vec::new();
@@ -14,7 +37,7 @@ pub fn doctor(cfg: &MangaConfig) -> DoctorResult {
     });
 
     // 2. libvips check
-    match libvips::VipsApp::new("mop-plugin-manga", false) {
+    match get_vips_app() {
         Ok(app) => {
             let ver = app.version_string().unwrap_or("unknown");
             checks.push(DoctorCheck {
@@ -76,4 +99,24 @@ pub fn doctor(cfg: &MangaConfig) -> DoctorResult {
     }
 
     DoctorResult { checks }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_doctor_checks() {
+        let cfg = MangaConfig::default();
+        let res = doctor(&cfg);
+        assert_eq!(res.checks.len(), 4);
+        let libvips_check = res.checks.iter().find(|c| c.name == "libvips").unwrap();
+        assert_eq!(libvips_check.status, "ok");
+        assert!(libvips_check.message.contains("version"));
+
+        // Calling doctor again must reuse the held instance without error or vips_shutdown
+        let res2 = doctor(&cfg);
+        let libvips_check2 = res2.checks.iter().find(|c| c.name == "libvips").unwrap();
+        assert_eq!(libvips_check2.status, "ok");
+    }
 }

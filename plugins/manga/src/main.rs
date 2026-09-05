@@ -33,6 +33,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Initialize libvips once for the lifetime of the process.
+    // Leaking / mem::forget prevents vips_shutdown() from destroying libvips thread pools.
+    match libvips::VipsApp::new("mop-plugin-manga", false) {
+        Ok(app) => {
+            let leaked = Box::leak(Box::new(app));
+            info!(
+                "libvips initialized successfully (version: {})",
+                leaked.version_string().unwrap_or("unknown")
+            );
+            doctor::set_vips_app(Ok(leaked));
+        }
+        Err(e) => {
+            warn!("Failed to initialize libvips: {e}");
+            doctor::set_vips_app(Err(e.to_string()));
+        }
+    }
+
     let plugin_id = env::var("MOP_PLUGIN_ID").unwrap_or_else(|_| "mop.manga".to_string());
     let socket_path = env::var("MOP_PLUGIN_SOCKET")
         .map(PathBuf::from)

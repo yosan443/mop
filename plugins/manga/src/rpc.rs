@@ -458,8 +458,8 @@ async fn run_batch_job(
     let mut processed = 0;
     for file in files {
         if cancel_token.load(Ordering::SeqCst) {
-            let _ = send_log(&host_socket, &job_id, "warn", "Batch cancelled by user").await;
-            let _ = send_finished(&host_socket, &job_id, "cancelled", None).await;
+            let _ = send_log(&host_socket, &job_id, "warn", "Batch canceled by user").await;
+            let _ = send_finished(&host_socket, &job_id, "canceled", None).await;
             return;
         }
 
