@@ -23,6 +23,7 @@ use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::handlers::{
     auth::{get_auth_meta, get_me, login, logout, register, AppState},
+    backup::{create_backup_handler, list_backups_handler},
     events::stream_events,
     health::health_check,
     jobs::{get_job, list_jobs, stream_jobs},
@@ -148,6 +149,12 @@ pub fn create_app_with_supervisor(
         .route("/plugins/{id}/settings/apply", post(apply_plugin_settings))
         .route("/plugins/{id}/rpc", post(proxy_plugin_rpc))
         .route("/plugins/{id}/ui/{*file_path}", get(serve_plugin_ui))
+        // Backup API (Admin only + Audit logging)
+        .route("/backup", post(create_backup_handler))
+        .route(
+            "/backups",
+            get(list_backups_handler).post(create_backup_handler),
+        )
         // Events SSE (Viewer+)
         .route("/events/stream", get(stream_events));
 
