@@ -4,9 +4,11 @@ import os from 'os';
 import path from 'path';
 
 export default async function globalTeardown() {
-  console.log('[E2E Teardown] Cleaning up any orphan mop-plugin-hello processes...');
+  console.log('[E2E Teardown] Cleaning up any orphan plugin processes...');
   try {
     execSync("pkill -f '[m]op-plugin-hello' || true", { stdio: 'ignore' });
+    execSync("pkill -f '[m]op-plugin-manga' || true", { stdio: 'ignore' });
+    execSync("pkill -f '[m]op-plugin-video' || true", { stdio: 'ignore' });
   } catch (err) {
     console.warn('[E2E Teardown] pkill warning:', err);
   }

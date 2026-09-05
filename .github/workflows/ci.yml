@@ -92,7 +92,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsystemd-dev
+          sudo apt-get install -y libsystemd-dev libarchive-dev libvips-dev ffmpeg
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -118,8 +118,8 @@ jobs:
       - name: Build mop-cli Binary
         run: cargo build -p mop-cli
 
-      - name: Build mop-plugin-hello Binary
-        run: cargo build -p mop-plugin-hello
+      - name: Build Plugin Binaries
+        run: cargo build -p mop-plugin-hello -p mop-plugin-manga -p mop-plugin-video
 
       - name: Install E2E Dependencies & Playwright Browsers
         run: |
