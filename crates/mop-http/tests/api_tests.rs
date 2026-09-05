@@ -1000,6 +1000,37 @@ jobs = ["hello.ping"]
         .unwrap()
         .contains("CAPABILITY_REQUIRED"));
 
+    // Missing job_type returns 400 BAD_REQUEST
+    let missing_kind_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/plugins/mop.hello/rpc")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "job.submit",
+                "params": {},
+                "id": 25
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let missing_kind_res = app.clone().oneshot(missing_kind_req).await.unwrap();
+    assert_eq!(missing_kind_res.status(), StatusCode::BAD_REQUEST);
+    let missing_body = missing_kind_res
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let missing_json: serde_json::Value = serde_json::from_slice(&missing_body).unwrap();
+    assert!(missing_json["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Missing 'job_type'"));
+
     // Condition 2: allowed job_type "hello.ping" submitted, but process is not running.
     // Job must be failed immediately and NOT left orphaned in Queued state.
     let valid_job_req = Request::builder()
