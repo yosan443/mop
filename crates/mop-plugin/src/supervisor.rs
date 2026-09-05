@@ -404,7 +404,7 @@ impl PluginSupervisor {
 
         if self.use_systemd_transient {
             // Attempt systemd StartTransientUnit via D-Bus (zbus)
-            match self
+            let (unit_name, pid) = self
                 .start_transient_unit(
                     plugin_id,
                     &exec_path,
@@ -412,27 +412,16 @@ impl PluginSupervisor {
                     &plugin_socket,
                     &host_socket,
                 )
-                .await
-            {
-                Ok((unit_name, pid)) => {
-                    info!(
-                        "Started plugin '{}' via systemd transient unit '{}' (PID: {:?})",
-                        plugin_id, unit_name, pid
-                    );
-                    is_transient = true;
-                    transient_unit_name = Some(unit_name);
-                    spawned_pid = pid;
-                    if let Some(p) = pid {
-                        self.register_plugin_pid(p, plugin_id).await;
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to start systemd transient unit for '{}': {e}. Falling back to direct process spawn.",
-                        plugin_id
-                    );
-                }
-            }
+                .await?;
+
+            info!(
+                "Started plugin '{}' via systemd transient unit '{}' (PID: {})",
+                plugin_id, unit_name, pid
+            );
+            is_transient = true;
+            transient_unit_name = Some(unit_name);
+            spawned_pid = Some(pid);
+            self.register_plugin_pid(pid, plugin_id).await;
         }
 
         if !is_transient {
@@ -506,6 +495,20 @@ impl PluginSupervisor {
             if let Some(mut child) = child_proc {
                 let _ = child.kill().await;
             }
+            if let Some(unit_name) = &transient_unit_name {
+                if let Ok(conn) = zbus::Connection::system().await {
+                    let _: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                        .call_method(
+                            Some("org.freedesktop.systemd1"),
+                            "/org/freedesktop/systemd1",
+                            Some("org.freedesktop.systemd1.Manager"),
+                            "StopUnit",
+                            &(unit_name.as_str(), "replace"),
+                        )
+                        .await
+                        .and_then(|r| r.body().deserialize());
+                }
+            }
             if let Some(pid) = spawned_pid {
                 self.unregister_plugin_pid(pid).await;
             }
@@ -533,6 +536,20 @@ impl PluginSupervisor {
             error!("Failed to initialize plugin '{plugin_id}': {e}");
             if let Some(mut child) = child_proc {
                 let _ = child.kill().await;
+            }
+            if let Some(unit_name) = &transient_unit_name {
+                if let Ok(conn) = zbus::Connection::system().await {
+                    let _: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                        .call_method(
+                            Some("org.freedesktop.systemd1"),
+                            "/org/freedesktop/systemd1",
+                            Some("org.freedesktop.systemd1.Manager"),
+                            "StopUnit",
+                            &(unit_name.as_str(), "replace"),
+                        )
+                        .await
+                        .and_then(|r| r.body().deserialize());
+                }
             }
             if let Some(pid) = spawned_pid {
                 self.unregister_plugin_pid(pid).await;
@@ -572,7 +589,7 @@ impl PluginSupervisor {
         plugin_base_dir: &std::path::Path,
         plugin_socket: &std::path::Path,
         host_socket: &std::path::Path,
-    ) -> Result<(String, Option<u32>), AppError> {
+    ) -> Result<(String, u32), AppError> {
         let unit_name = format!("mop-plugin-{plugin_id}.service");
         let conn = zbus::Connection::system()
             .await
@@ -688,6 +705,17 @@ impl PluginSupervisor {
                     let state = val.to_string();
                     let trimmed = state.trim_matches('"');
                     if trimmed == "failed" {
+                        let _: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                            .call_method(
+                                Some("org.freedesktop.systemd1"),
+                                "/org/freedesktop/systemd1",
+                                Some("org.freedesktop.systemd1.Manager"),
+                                "StopUnit",
+                                &(unit_name.as_str(), "replace"),
+                            )
+                            .await
+                            .and_then(|r| r.body().deserialize());
+
                         return Err(AppError::Plugin(format!(
                             "Transient unit '{unit_name}' entered failed state"
                         )));
@@ -718,11 +746,30 @@ impl PluginSupervisor {
             }
         }
 
-        if main_pid.is_none() {
-            warn!("Timed out waiting for MainPID of transient unit '{unit_name}'");
-        }
+        let pid = match main_pid {
+            Some(pid) => pid,
+            None => {
+                warn!(
+                    "Timed out waiting for MainPID of transient unit '{unit_name}', stopping unit"
+                );
+                let _: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                    .call_method(
+                        Some("org.freedesktop.systemd1"),
+                        "/org/freedesktop/systemd1",
+                        Some("org.freedesktop.systemd1.Manager"),
+                        "StopUnit",
+                        &(unit_name.as_str(), "replace"),
+                    )
+                    .await
+                    .and_then(|r| r.body().deserialize());
 
-        Ok((unit_name, main_pid))
+                return Err(AppError::Plugin(format!(
+                    "Timed out waiting for MainPID of transient unit '{unit_name}'"
+                )));
+            }
+        };
+
+        Ok((unit_name, pid))
     }
 
     /// Stop a running plugin process or systemd transient unit
@@ -843,8 +890,25 @@ impl PluginSupervisor {
                             Err(_) => (false, None),
                         }
                     } else if proc.is_transient_unit {
-                        // For transient units, check active status via D-Bus
-                        (true, None)
+                        let is_alive = if let Some(pid) = proc.pid {
+                            #[cfg(unix)]
+                            {
+                                let res = unsafe { libc::kill(pid as i32, 0) };
+                                if res == 0 {
+                                    true
+                                } else {
+                                    let err = std::io::Error::last_os_error();
+                                    err.raw_os_error() == Some(libc::EPERM)
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                true
+                            }
+                        } else {
+                            false
+                        };
+                        (is_alive, None)
                     } else {
                         break;
                     }
@@ -856,7 +920,7 @@ impl PluginSupervisor {
                         plugin_id, exit_status
                     );
 
-                    // Clean up dead child and PID
+                    // Clean up dead child, PID, and transient unit
                     {
                         let procs = supervisor.processes.read().await;
                         if let Some(proc_mutex) = procs.get(&plugin_id) {
@@ -864,6 +928,22 @@ impl PluginSupervisor {
                             let _ = proc.child.take();
                             if let Some(pid) = proc.pid.take() {
                                 supervisor.unregister_plugin_pid(pid).await;
+                            }
+                            if proc.is_transient_unit {
+                                if let Some(unit_name) = &proc.unit_name {
+                                    if let Ok(conn) = zbus::Connection::system().await {
+                                        let _: Result<zbus::zvariant::OwnedObjectPath, _> = conn
+                                            .call_method(
+                                                Some("org.freedesktop.systemd1"),
+                                                "/org/freedesktop/systemd1",
+                                                Some("org.freedesktop.systemd1.Manager"),
+                                                "StopUnit",
+                                                &(unit_name.as_str(), "replace"),
+                                            )
+                                            .await
+                                            .and_then(|r| r.body().deserialize());
+                                    }
+                                }
                             }
                         }
                     }
