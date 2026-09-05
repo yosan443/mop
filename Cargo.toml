@@ -11,6 +11,8 @@ members = [
     "crates/mop-http",
     "crates/mop-cli",
     "plugins/hello",
+    "plugins/common",
+    "plugins/manga",
 ]
 
 [workspace.package]
@@ -29,6 +31,7 @@ mop-watch = { path = "crates/mop-watch" }
 mop-jobs = { path = "crates/mop-jobs" }
 mop-plugin = { path = "crates/mop-plugin" }
 mop-plugin-sdk = { path = "crates/mop-plugin-sdk" }
+mop-plugin-common = { path = "plugins/common" }
 mop-http = { path = "crates/mop-http" }
 
 # Async & Runtime

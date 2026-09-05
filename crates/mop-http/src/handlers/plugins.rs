@@ -342,10 +342,18 @@ pub async fn proxy_plugin_rpc(
     // 3. Connect to plugin unix socket & forward RPC request
     if req.method == "job.submit" {
         let params_val = req.params.as_ref();
-        let kind = params_val
+        let Some(kind) = params_val
             .and_then(|p| p.get("job_type").or_else(|| p.get("kind")))
             .and_then(|k| k.as_str())
-            .unwrap_or("hello.ping");
+            .filter(|k| !k.trim().is_empty())
+        else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::from(AppError::BadRequest(
+                    "Missing 'job_type' in job.submit parameters".into(),
+                ))),
+            ));
+        };
 
         // 3a. Verify capability: Check plugin_permissions for capability == "jobs"
         let perms_repo = PluginPermissionsRepo::new(state.pool.clone());
