@@ -159,11 +159,11 @@ jobs:
         run: npm install -g pnpm
 
       - name: Build Debian Packages
-        run: ./scripts/build-deb.sh
+        run: bash ./scripts/build-deb.sh
 
       - name: Build Standalone Tarball
-        run: ./scripts/build-tarball.sh
+        run: bash ./scripts/build-tarball.sh
 
       - name: Run Package Smoke Test
-        run: ./scripts/smoke-test-package.sh
+        run: bash ./scripts/smoke-test-package.sh
 
