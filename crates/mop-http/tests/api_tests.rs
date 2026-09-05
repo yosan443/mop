@@ -1247,3 +1247,159 @@ api_version = "1"
     assert_eq!(diff_json["items"][0]["draft_value"], 99999);
     assert_eq!(diff_json["items"][0]["change_type"], "added");
 }
+
+#[tokio::test]
+async fn test_backup_api_rbac_and_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_dir = dir.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+
+    let mut config = Config::default();
+    config.backup.dir = backup_dir.clone();
+    let (app, _pool, _tmp) = setup_custom_app(config).await;
+
+    // 1. Unauthenticated request -> 401
+    let list_req = Request::builder()
+        .uri("/api/v1/backups")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // 2. Setup admin
+    let setup_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/register")
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "admin",
+                "password": "Password12345!"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let setup_res = app.clone().oneshot(setup_req).await.unwrap();
+    assert_eq!(setup_res.status(), StatusCode::CREATED);
+    let admin_cookie = setup_res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 3. Create viewer user
+    let create_viewer_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/users")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "viewer",
+                "password": "Password12345!",
+                "role": "viewer"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let create_viewer_res = app.clone().oneshot(create_viewer_req).await.unwrap();
+    assert_eq!(create_viewer_res.status(), StatusCode::CREATED);
+
+    // Login as viewer
+    let viewer_login_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header(header::ORIGIN, "http://localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "username": "viewer",
+                "password": "Password12345!"
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let viewer_login_res = app.clone().oneshot(viewer_login_req).await.unwrap();
+    assert_eq!(viewer_login_res.status(), StatusCode::OK);
+    let viewer_cookie = viewer_login_res
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 4. Viewer cannot list or create backups -> 403 Forbidden
+    let viewer_list_req = Request::builder()
+        .uri("/api/v1/backups")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(viewer_list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    let viewer_create_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/backup")
+        .header(header::COOKIE, viewer_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(viewer_create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // 5. Admin can list backups -> 200 OK (initially empty)
+    let admin_list_req = Request::builder()
+        .uri("/api/v1/backups")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(admin_list_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let list_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(list_json["backups"].as_array().unwrap().len(), 0);
+
+    // 6. Admin triggers backup -> 202 Accepted
+    let admin_create_req = Request::builder()
+        .method("POST")
+        .uri("/api/v1/backup")
+        .header(header::COOKIE, admin_cookie.clone())
+        .header(header::ORIGIN, "http://localhost")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(admin_create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    let create_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let job_id = create_json["job_id"].as_str().unwrap().to_string();
+    assert!(!job_id.is_empty());
+
+    // Give background task a moment to finish backup
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // 7. Verify backup archive was created and appears in list
+    let admin_list_req2 = Request::builder()
+        .uri("/api/v1/backups")
+        .header(header::COOKIE, admin_cookie.clone())
+        .body(Body::empty())
+        .unwrap();
+    let res2 = app.clone().oneshot(admin_list_req2).await.unwrap();
+    assert_eq!(res2.status(), StatusCode::OK);
+    let body2 = res2.into_body().collect().await.unwrap().to_bytes();
+    let list_json2: serde_json::Value = serde_json::from_slice(&body2).unwrap();
+    let backups = list_json2["backups"].as_array().unwrap();
+    assert_eq!(backups.len(), 1);
+    assert!(backups[0]["filename"]
+        .as_str()
+        .unwrap()
+        .starts_with("mop-backup-"));
+    assert!(backups[0]["filename"]
+        .as_str()
+        .unwrap()
+        .ends_with(".tar.zst"));
+}

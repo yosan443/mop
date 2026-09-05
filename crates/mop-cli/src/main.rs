@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
+mod backup;
+
 #[derive(Parser, Debug)]
 #[command(
     name = "mop",
@@ -58,20 +60,36 @@ enum Commands {
 
     #[command(about = "Create or list backups (M6)")]
     Backup {
-        #[arg(long, help = "Create a new backup")]
-        create: bool,
+        #[command(subcommand)]
+        action: Option<BackupAction>,
     },
 
-    #[command(about = "Restore database and config from backup file (M6)")]
+    #[command(about = "Restore database and config from backup file (M6, offline only)")]
     Restore {
-        #[arg(help = "Path to backup archive")]
+        #[arg(help = "Path to backup archive (.tar.zst)")]
         file: PathBuf,
+        #[arg(long, help = "Force restore even if mop service status check fails")]
+        force: bool,
     },
 
     #[command(about = "Manage mop plugins (M4)")]
     Plugin {
         #[command(subcommand)]
         action: Option<PluginCommands>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BackupAction {
+    #[command(about = "Create a new backup archive")]
+    Create {
+        #[arg(short, long, help = "Destination directory override")]
+        output_dir: Option<PathBuf>,
+    },
+    #[command(about = "List existing backup archives")]
+    List {
+        #[arg(short, long, help = "Directory to search for backups")]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -183,13 +201,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("Doctor diagnosis complete: System is healthy.");
         }
-        Commands::Backup { create: _ } => {
-            eprintln!("Error: 'mop backup' is a stub in milestone M2. It will be implemented in milestone M6 (SPEC.md §14).");
-            std::process::exit(1);
-        }
-        Commands::Restore { file: _ } => {
-            eprintln!("Error: 'mop restore' is a stub in milestone M2. It will be implemented in milestone M6 (SPEC.md §14).");
-            std::process::exit(1);
+        Commands::Backup { action } => match action.unwrap_or(BackupAction::List { dir: None }) {
+            BackupAction::Create { output_dir } => {
+                backup::handle_backup_create(&config, output_dir).await?;
+            }
+            BackupAction::List { dir } => {
+                backup::handle_backup_list(&config, dir)?;
+            }
+        },
+        Commands::Restore { file, force } => {
+            backup::handle_restore(&config, &file, cli.config.as_deref(), force).await?;
         }
         Commands::Plugin { action: _ } => {
             eprintln!("Error: 'mop plugin' is a stub in milestone M2. It will be implemented in milestone M4 (SPEC.md §11).");
