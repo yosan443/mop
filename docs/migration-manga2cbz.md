@@ -23,10 +23,10 @@
 
 | 旧 manga2cbz パラメータ | mop-plugin-manga 設定キー (`MangaConfig`) | 型 | デフォルト値 | 説明 |
 | :--- | :--- | :--- | :--- | :--- |
-| `--watch-dir` (複数可) | `watch_dirs` | array of strings (paths) | `["/var/lib/mop/plugins/mop.manga/watch"]` | 監視対象ディレクトリ一覧 (新規アーカイブ検出時に自動変換) |
-| `--output-dir` | `output_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/output"` | 変換後 CBZ の出力先ディレクトリ (`watch_dirs` と同一・包含は不可) |
-| `--unknown-dir` | `unknown_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/unknown"` | マンガと判定されなかったアーカイブの退避先ディレクトリ |
-| `--work-dir` | `work_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/work"` | アーカイブ展開・画像処理の一時作業ディレクトリ |
+| `--watch-dir` (複数可) | `watch_dirs` | array of strings (paths) | `["$HOME/manga"]` | 監視対象ディレクトリ一覧 (新規アーカイブ検出時に自動変換) |
+| `--output-dir` | `output_dir` | string (path) | `"$HOME/manga-cbz"` | 変換後 CBZ の出力先ディレクトリ (`watch_dirs` と同一・包含は不可) |
+| `--unknown-dir` | `unknown_dir` | string (path) | `"$HOME/manga-unknown"` | マンガと判定されなかったアーカイブの退避先ディレクトリ |
+| `--work-dir` | `work_dir` | string (path) | `"$HOME/.cache/manga2cbz"` | アーカイブ展開・画像処理の一時作業ディレクトリ |
 | `--concurrency`, `-j` | `workers` | integer | `2` | 同時並行で処理するアーカイブ変換ワーカー数 |
 | `-q`, `--quality` | `webp_quality` | integer (1-100) | `92` | WebP 圧縮品質 |
 | `--lossless` | `lossless` | boolean | `false` | WebP 可逆圧縮を使用するかどうか |
