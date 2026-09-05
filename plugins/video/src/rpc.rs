@@ -191,9 +191,14 @@ fn handle_config_validate(req: RpcRequest) -> RpcResponse {
 
     match cfg.validate_layout() {
         Ok(()) => RpcResponse::success(req.id, serde_json::json!({ "valid": true, "errors": [] })),
-        Err(e) => {
-            RpcResponse::success(req.id, serde_json::json!({ "valid": false, "errors": [e] }))
-        }
+        Err(e) => RpcResponse::success(
+            req.id,
+            serde_json::json!({
+                "valid": false,
+                "message": e.to_string(),
+                "errors": [e]
+            }),
+        ),
     }
 }
 
@@ -260,7 +265,7 @@ async fn handle_job_submit(req: RpcRequest, state: &PluginState) -> RpcResponse 
 
     let state_clone = state.clone();
     let job_id_clone = job_id.clone();
-    let job_params = params.clone();
+    let job_params = params.get("params").cloned().unwrap_or(params.clone());
 
     tokio::spawn(async move {
         match job_type.as_str() {

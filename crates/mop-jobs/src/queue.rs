@@ -256,13 +256,15 @@ impl JobService {
         let now_str = Utc::now().to_rfc3339();
         match status {
             JobStatus::Running => {
-                sqlx::query("UPDATE jobs SET status = ?, started_at = ? WHERE id = ?")
-                    .bind(status.as_str())
-                    .bind(&now_str)
-                    .bind(job_id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| AppError::Database(format!("Failed to update job status: {e}")))?;
+                sqlx::query(
+                    "UPDATE jobs SET status = ?, started_at = ? WHERE id = ? AND status = 'queued'",
+                )
+                .bind(status.as_str())
+                .bind(&now_str)
+                .bind(job_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to update job status: {e}")))?;
             }
             JobStatus::Succeeded | JobStatus::Failed | JobStatus::Canceled => {
                 sqlx::query("UPDATE jobs SET status = ?, finished_at = ?, error = ? WHERE id = ?")

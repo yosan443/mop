@@ -54,6 +54,12 @@ impl ResidentWatcher {
                     Some(event_res) = rx.recv() => {
                         match event_res {
                             Ok(event) => {
+                                if !matches!(
+                                    event.kind,
+                                    notify::EventKind::Create(_) | notify::EventKind::Modify(_)
+                                ) {
+                                    continue;
+                                }
                                 for path in event.paths {
                                     if is_candidate_file(&path, &cfg_clone) {
                                         pending.insert(path, Instant::now());
