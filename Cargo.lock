@@ -1701,7 +1701,7 @@ dependencies = [
 
 [[package]]
 name = "mop-auth"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "mop-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "mop-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "mop-db"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "mop-core",
@@ -1790,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "mop-http"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "mop-jobs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "mop-core",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "libc",
@@ -1861,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin-common"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "libarchive2",
  "serde",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin-hello"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "mop-plugin-sdk",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin-manga"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin-sdk"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1924,7 +1924,7 @@ dependencies = [
 
 [[package]]
 name = "mop-plugin-video"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "mop-watch"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "bollard",

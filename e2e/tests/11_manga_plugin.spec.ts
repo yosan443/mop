@@ -81,7 +81,7 @@ test.describe('M5 Part 3: Manga Plugin Full Lifecycle & Watcher E2E', () => {
     const mangaCard = page.locator('#plugin-card-mop-manga');
     await expect(mangaCard).toBeVisible({ timeout: 10000 });
     await expect(mangaCard).toContainText('Manga Conversion');
-    await expect(mangaCard).toContainText('v0.1.0');
+    await expect(mangaCard).toContainText('v1.0.0');
 
     // 3. Capability consent & enablement
     const enableBtn = page.locator('#btn-enable-mop-manga');

@@ -39,7 +39,7 @@ test.describe('M4 Full-stack Plugin E2E Lifecycle', () => {
     const pluginCard = page.locator('#plugin-card-mop-hello');
     await expect(pluginCard).toBeVisible({ timeout: 10000 });
     await expect(pluginCard).toContainText('Hello Plugin');
-    await expect(pluginCard).toContainText('v0.1.0');
+    await expect(pluginCard).toContainText('v1.0.0');
 
     // 3. Capability consent & enablement
     const enableBtn = page.locator('#btn-enable-mop-hello');
