@@ -1,0 +1,15 @@
+id = "mop.video"
+name = "Video Transcoding"
+version = "0.1.0"
+api_version = "1"
+description = "Video transcode engine and directory watcher"
+
+[ui]
+entry = "ui/index.js"
+element = "mop-plugin-video"
+
+[backend]
+exec = "mop-plugin-video"
+
+[capabilities]
+jobs = ["video.convert", "video.batch", "video.inspect"]

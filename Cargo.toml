@@ -13,6 +13,7 @@ members = [
     "plugins/hello",
     "plugins/common",
     "plugins/manga",
+    "plugins/video",
 ]
 
 [workspace.package]

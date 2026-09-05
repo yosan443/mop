@@ -1,0 +1,25 @@
+[package]
+name = "mop-plugin-video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+mop-plugin-sdk = { workspace = true }
+mop-plugin-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
+anyhow = "1.0"
+notify = "8.2"
+walkdir = "2.5"
+chrono = { workspace = true }
+
+[dev-dependencies]
+zip = { version = "8.6.0", default-features = false }
+

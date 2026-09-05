@@ -1878,6 +1878,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "mop-plugin-video"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mop-plugin-common",
+ "mop-plugin-sdk",
+ "notify",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
 name = "mop-watch"
 version = "0.1.0"
 dependencies = [
