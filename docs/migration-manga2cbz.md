@@ -1,38 +1,51 @@
 # manga2cbz から mop-plugin-manga への移行ガイド (Migration Guide)
 
-本文書は、従来の Python/CLI 版 **manga2cbz** から、mop ファーストパーティプラグイン **`mop-plugin-manga`** への移行手順および設定対照表です。
+本文書は、従来の Rust 製 CLI ツール **manga2cbz** から、mop ファーストパーティプラグイン **`mop-plugin-manga`** への移行手順および設定対照表です。
 
 ---
 
 ## 1. 移行の概要とメリット
 
-`mop-plugin-manga` は、旧 manga2cbz の機能（ZIP/RAR/7z/TAR 等のアーカイブから WebP CBZ への一括変換・ディレクトリ監視）を Rust ネイティブで再実装したプラグインです。
+`mop-plugin-manga` は、旧 manga2cbz のコア機能（ZIP/RAR/7z/TAR 等のアーカイブから WebP CBZ への一括変換・ディレクトリ監視）を、mop デーモンのプラグインアーキテクチャに移植したコンポーネントです。
 
 ### 主な改善点
-1. **パフォーマンス向上**: libarchive および libvips の C バインディングを直接利用し、メモリ消費量を抑えつつ高速に画像リサイズ・WebP エンコードを実施。
-2. **安全性・サンドボックス**: mop 本体とは別システムユーザー (`mop-plugin-manga`) で動作し、親ディレクトリ脱出や危険なシンボリックリンクのハードリミットを内包 (SPEC §16)。
-3. **Web UI による一元管理**: 変換キュー、進行中の進捗バー、失敗したアーカイブの再試行、ディレクトリ監視ステータスを mop の Web 画面から監視・操作可能。
-4. **安全なトランザクション**: 変換中の一時ディレクトリは `/tmp/mop-manga-*` に分離され、中断・失敗時にも元アーカイブを破損させず自動クリーンアップ。
+1. **プロセス分離とサンドボックス**: mop 本体とは別システムユーザー (`mop-plugin-manga`) で動作し、親ディレクトリ脱出や危険なシンボリックリンクのハードリミットを内包 (SPEC §16)。
+2. **Web UI による一元管理**: 変換キュー、進行中の進捗バー、失敗したアーカイブの再試行、リアルタイムログを mop の Web 画面から監視・操作可能。
+3. **安全なトランザクション**: 変換中の一時作業ディレクトリは `work_dir` 配下に分離され、中断・失敗時にも元アーカイブを破損させず自動クリーンアップ。
+4. **イベント駆動・低負荷監視**: ポーリングではなく inotify (`notify`) を利用し、2 秒間のデバウンス (`notify + 2s debounce`) を経てファイル書き込み完了を検知して自動投入。
+5. **WebP 仕様上限への自動対応**: WebP フォーマットの仕様上限である 16383px を超える画像は、アスペクト比を維持したまま 16383px 以内に自動縮小されます (設定パラメータは不要)。
 
 ---
 
 ## 2. 設定パラメータ対照表 (Mapping Table)
 
-旧 manga2cbz (CLI オプション / 設定ファイル) と `mop-plugin-manga` の設定項目の対照表です。
+旧 manga2cbz と `mop-plugin-manga` (MangaConfig) の設定項目の対照表です。
 
-| 旧 manga2cbz パラメータ | mop-plugin-manga 設定キー | 型 | デフォルト値 | 説明 |
+| 旧 manga2cbz パラメータ | mop-plugin-manga 設定キー (`MangaConfig`) | 型 | デフォルト値 | 説明 |
 | :--- | :--- | :--- | :--- | :--- |
-| `--watch-dir`, `watch_dir` | `watch_dir` | string (path) | `""` | 監視対象ディレクトリ (新規アーカイブ検出時に自動変換) |
-| `--output-dir`, `output_dir` | `output_dir` | string (path) | `""` | 変換後 CBZ の出力先ディレクトリ (`watch_dir` と同一は不可) |
-| `-q`, `--quality`, `quality` | `quality` | integer (1-100) | `85` | WebP 圧縮品質 (可逆圧縮希望の場合は 100 または専用フラグ) |
-| `--max-dimension` | `max_dimension` | integer (px) | `1920` | 画像の最大幅・高さ (超過時にアスペクト比を維持して縮小) |
-| `--concurrency`, `-j` | `workers` | integer | `2` | 同時並行で処理するアーカイブ数 |
+| `--watch-dir` (複数可) | `watch_dirs` | array of strings (paths) | `["/var/lib/mop/plugins/mop.manga/watch"]` | 監視対象ディレクトリ一覧 (新規アーカイブ検出時に自動変換) |
+| `--output-dir` | `output_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/output"` | 変換後 CBZ の出力先ディレクトリ (`watch_dirs` と同一・包含は不可) |
+| `--unknown-dir` | `unknown_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/unknown"` | マンガと判定されなかったアーカイブの退避先ディレクトリ |
+| `--work-dir` | `work_dir` | string (path) | `"/var/lib/mop/plugins/mop.manga/work"` | アーカイブ展開・画像処理の一時作業ディレクトリ |
+| `--concurrency`, `-j` | `workers` | integer | `2` | 同時並行で処理するアーカイブ変換ワーカー数 |
+| `-q`, `--quality` | `webp_quality` | integer (1-100) | `92` | WebP 圧縮品質 |
+| `--lossless` | `lossless` | boolean | `false` | WebP 可逆圧縮を使用するかどうか |
+| `--images-only` | `images_only` | boolean | `false` | 画像のみを抽出し非画像ファイルを除外するかどうか |
+| `--keep-non-images` | `keep_non_images` | boolean | `true` | テキスト等の非画像ファイルを CBZ 内に維持するかどうか |
 | `--delete-original` | `delete_original` | boolean | `false` | 変換成功後に元アーカイブを削除するかどうか |
-| `--poll-interval` | `poll_interval_sec` | integer (sec) | `10` | ディレクトリポーリング・inotify 再検知の間隔 |
+| `--threshold` | `manga_image_threshold` | integer | `5` | マンガアーカイブと判定する最低画像枚数 |
+| `--overwrite` | `overwrite` | boolean | `false` | 既存の同名 CBZ 出力ファイルを上書きするかどうか |
+| `--scan-on-start` | `scan_on_start` | boolean | `true` | プラグイン起動時に `watch_dirs` 内の既存未処理アーカイブを一括スキャンするか |
+| `--reject-symlinks` | `reject_symlinks` | boolean | `true` | シンボリックリンクを含むアーカイブの展開を拒否するか (セキュリティ保護) |
+
+> [!NOTE]
+> **画像サイズと監視方式について**:
+> - **最大解像度制限 (`max_dimension`)**: 手動設定は不要です。WebP フォーマットの仕様上限である 16383px を超える巨大画像は自動的にアスペクト比を維持して 16383px に縮小されます。
+> - **ポーリング間隔 (`poll_interval_sec`)**: 旧 CLI のポーリングループとは異なり、Linux inotify イベントを検知し、ファイルの書き込み完了を確実にするための 2 秒デバウンス (`notify + 2s debounce`) を経て自動キューイングされます。
 
 > [!CAUTION]
 > **ハードリミット制約 (SPEC §16)**:
-> - `watch_dir` と `output_dir` に同一のディレクトリ、または包含関係にあるディレクトリを指定することはできません (無限ループ防止)。
+> - `watch_dirs` と `output_dir` に同一のディレクトリ、または互いを包含するディレクトリを指定することはできません (再帰無限ループ防止)。
 > - 出力先ディスクの空き容量が最低空き容量 (デフォルト 2GB) を下回る場合、新規変換ジョブは自動的に一時停止します。
 
 ---
@@ -53,12 +66,13 @@ sudo dpkg -i mop-plugin-manga_0.1.0_amd64.deb
 
 1. mop Web コンソール (`http://<server-ip>:8787`) に管理者でログインします。
 2. 左メニューの **Plugins** → **Manga Conversion** を開きます。
-3. **Settings** タブで、旧 manga2cbz で使用していたパスとパラメータを入力します:
-   - `Watch Directory`: (例: `/data/incoming/manga`)
-   - `Output Directory`: (例: `/data/library/manga`)
-   - `WebP Quality`: `85`
-   - `Max Dimension`: `1920`
-   - `Workers`: `2`
+3. **Settings** タブで、旧 manga2cbz で使用していたパスとパラメータを設定します:
+   - `watch_dirs`: (例: `["/data/incoming/manga"]`)
+   - `output_dir`: (例: `"/data/library/manga"`)
+   - `unknown_dir`: (例: `"/data/library/unknown"`)
+   - `webp_quality`: `92`
+   - `workers`: `2`
+   - `scan_on_start`: `true`
 4. **Save Draft** をクリックし、変更差分 (Diff) を確認します。
 5. **Apply Settings** をクリックして設定を反映します。
 
@@ -84,11 +98,12 @@ sudo systemctl stop manga2cbz.timer
 sudo systemctl disable manga2cbz.timer
 ```
 
-### ステップ 5: ディレクトリ監視の有効化
+### ステップ 5: プラグインの有効化と既存ファイルスキャン
 
 1. mop Web コンソールの **Manga Conversion** プラグイン画面を開きます。
-2. **Directory Watcher** を **Enabled (有効)** に切り替えます。
-3. テストファイルを `watch_dir` に投入し、数秒以内に自動的にジョブがキューイングされて変換が開始されることを確認します。
+2. プラグインを **Enable (有効化)** に切り替えます（または API `POST /api/v1/plugins/mop.manga/enable` を実行）。
+3. `scan_on_start = true` が有効な場合、プラグイン起動と同時に `watch_dirs` 内の既存アーカイブが検出されて順次変換キューに投入されます。
+4. 以降は inotify 監視 (`notify + 2s debounce`) により、`watch_dirs` に投入されたアーカイブが自動的に変換されます。
 
 ---
 
@@ -96,12 +111,15 @@ sudo systemctl disable manga2cbz.timer
 
 何らかの問題が発生して旧環境へ切り戻す必要がある場合:
 
-1. mop Web コンソールで **Directory Watcher** を **Disabled (無効)** にします。
+1. mop Web コンソールで **Manga Conversion** プラグインを **Disable (無効化)** にします。
+   （または CLI / HTTP API から無効化）:
+   ```bash
+   # 管理者セッション Cookie を使用して無効化
+   curl -X POST -b cookies.txt http://127.0.0.1:8787/api/v1/plugins/mop.manga/disable
+   ```
+   > ※ mop のプラグインは systemd unit ではなく、mop supervisor によって別プロセスとして起動・監視されているため、`systemctl stop mop-plugin-manga` ではなく mop のプラグイン API から無効化します。
+
 2. 旧 manga2cbz の cron または systemd timer を再開します:
    ```bash
    sudo systemctl enable --now manga2cbz.timer
-   ```
-3. mop のプラグインサービスを停止します:
-   ```bash
-   sudo systemctl stop mop-plugin-manga.service 2>/dev/null || true
    ```
