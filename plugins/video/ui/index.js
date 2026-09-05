@@ -444,8 +444,8 @@ class MopPluginVideo extends HTMLElement {
       this.setOutput('Error: PluginContext or callRpc not available');
       return;
     }
-    const input = this.shadowRoot.getElementById('batch-input')?.value?.trim();
-    if (!input) {
+    const dir = this.shadowRoot.getElementById('batch-input')?.value?.trim();
+    if (!dir) {
       this.setOutput('エラー: 対象ディレクトリパスを指定してください');
       return;
     }
@@ -456,7 +456,7 @@ class MopPluginVideo extends HTMLElement {
       this.setOutput('video.batch ジョブを送信中...');
       const res = await this._context.callRpc('job.submit', {
         job_type: 'video.batch',
-        params: { input, password, dry_run: dryRun },
+        params: { dir, password, dry_run: dryRun },
       });
       this.setOutput('ジョブ送信完了:\n' + JSON.stringify(res, null, 2));
       if (this._context.showNotification) {

@@ -68,7 +68,7 @@ test.describe('M5 Part 3: Manga Plugin Full Lifecycle & Watcher E2E', () => {
   });
 
   test('mop.manga: scan, enable, doctor, validate rejection, manual convert, and watcher conversion', async ({ page }) => {
-    test.setTimeout(90000);
+    test.setTimeout(120000);
 
     // 1. Log in or complete initial setup
     await ensureLoggedIn(page);
@@ -231,6 +231,45 @@ test.describe('M5 Part 3: Manga Plugin Full Lifecycle & Watcher E2E', () => {
     const updatedCbzFiles = getCbzFiles(outputDir);
     expect(updatedCbzFiles.length).toBeGreaterThanOrEqual(2);
     for (const f of updatedCbzFiles) {
+      expect(fs.statSync(f).size).toBeGreaterThan(0);
+    }
+
+    // 9. Batch conversion via UI (target directory with 1 file -> UI batch submit -> SUCCEEDED)
+    const batchIncomingDir = path.join(testBaseDir, 'batch_incoming');
+    fs.mkdirSync(batchIncomingDir, { recursive: true });
+    const batchZipPath = path.join(batchIncomingDir, 'batch_volume_03.zip');
+    createSampleMangaArchive(batchZipPath, 6);
+    expect(fs.existsSync(batchZipPath)).toBe(true);
+
+    await page.goto('/plugins/mop.manga');
+    await page.waitForLoadState('networkidle');
+
+    // Switch to Batch tab in Custom Element UI
+    const batchTabBtn = customEl.locator('#tab-batch');
+    await expect(batchTabBtn).toBeVisible({ timeout: 10000 });
+    await batchTabBtn.click();
+
+    const batchInput = customEl.locator('#batch-input');
+    await expect(batchInput).toBeVisible();
+    await batchInput.fill(batchIncomingDir);
+
+    const submitBatchBtn = customEl.locator('#btn-batch-submit');
+    await submitBatchBtn.click();
+    await expect(customEl.locator('#output')).toContainText('ジョブ送信完了:', { timeout: 10000 });
+
+    // Verify batch job in Jobs view reaches SUCCEEDED
+    await page.goto('/jobs');
+    await page.waitForLoadState('networkidle');
+
+    const batchJobCard = page.locator('.job-card').filter({ hasText: 'manga.batch' }).first();
+    await expect(batchJobCard).toBeVisible({ timeout: 10000 });
+    await expect(batchJobCard.locator('[data-test="job-status"]')).toContainText('SUCCEEDED', { timeout: 25000 });
+
+    // Verify CBZ from batch exists in outputDir
+    await expect.poll(() => getCbzFiles(outputDir).length, { timeout: 20000 }).toBeGreaterThan(2);
+    const finalCbzFiles = getCbzFiles(outputDir);
+    expect(finalCbzFiles.length).toBeGreaterThanOrEqual(3);
+    for (const f of finalCbzFiles) {
       expect(fs.statSync(f).size).toBeGreaterThan(0);
     }
   });
