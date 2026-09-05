@@ -329,3 +329,45 @@ exec = "crasher.py"
         "Plugin should have been automatically disabled after reaching crash limit"
     );
 }
+
+#[tokio::test]
+async fn test_supervisor_ipc_and_socket_permissions() {
+    let tmp = tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    let run_dir = tmp.path().join("run");
+    let db_path = tmp.path().join("test.db");
+    let pool = create_sqlite_pool(&db_path).await.unwrap();
+    run_migrations(&pool).await.unwrap();
+
+    let plugin_repo = PluginRepo::new(pool.clone());
+    let perms_repo = PluginPermissionsRepo::new(pool.clone());
+    let settings_repo = PluginSettingsRepo::new(pool.clone());
+    let job_service = JobService::new(pool.clone());
+
+    let supervisor = PluginSupervisor::new(
+        &plugins_dir,
+        &run_dir,
+        plugin_repo,
+        perms_repo,
+        settings_repo,
+        job_service,
+    );
+
+    // Start host listener
+    supervisor.ensure_host_listener().await.unwrap();
+
+    let host_sock = run_dir.join("host.sock");
+    assert!(host_sock.exists(), "host.sock should exist");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(&host_sock).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o660);
+
+        let plugins_run_dir = run_dir.join("plugins");
+        assert!(plugins_run_dir.exists(), "plugins_run_dir should exist");
+        let dir_meta = std::fs::metadata(&plugins_run_dir).unwrap();
+        assert_eq!(dir_meta.permissions().mode() & 0o777, 0o770);
+    }
+}

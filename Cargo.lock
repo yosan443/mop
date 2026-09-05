@@ -1800,6 +1800,7 @@ name = "mop-plugin"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "mop-core",
  "mop-db",
  "mop-jobs",

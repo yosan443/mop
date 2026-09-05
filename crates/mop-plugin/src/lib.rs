@@ -1,4 +1,5 @@
 pub mod host_notification;
+pub mod ipc;
 pub mod rpc;
 pub mod supervisor;
 
