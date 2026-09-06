@@ -19,19 +19,19 @@ const PLUGINS: PluginSpec[] = [
     id: 'mop.hello',
     crateName: 'mop-plugin-hello',
     sourceDir: 'plugins/hello',
-    version: '0.1.0',
+    version: '1.0.0',
   },
   {
     id: 'mop.manga',
     crateName: 'mop-plugin-manga',
     sourceDir: 'plugins/manga',
-    version: '0.1.0',
+    version: '1.0.0',
   },
   {
     id: 'mop.video',
     crateName: 'mop-plugin-video',
     sourceDir: 'plugins/video',
-    version: '0.1.0',
+    version: '1.0.0',
   },
 ];
 

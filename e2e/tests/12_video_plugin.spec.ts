@@ -94,7 +94,7 @@ test.describe('M5 Part 3: Video Plugin Full Lifecycle & Coexistence E2E', () => 
     const videoCard = page.locator('#plugin-card-mop-video');
     await expect(videoCard).toBeVisible({ timeout: 10000 });
     await expect(videoCard).toContainText('Video Transcoding');
-    await expect(videoCard).toContainText('v0.1.0');
+    await expect(videoCard).toContainText('v1.0.0');
 
     // 3. Capability consent & enablement
     const enableBtn = page.locator('#btn-enable-mop-video');

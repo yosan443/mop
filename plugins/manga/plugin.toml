@@ -1,6 +1,6 @@
 id = "mop.manga"
 name = "Manga Conversion"
-version = "0.1.0"
+version = "1.0.0"
 api_version = "1"
 description = "Archive to WebP CBZ converter and directory watcher"
 

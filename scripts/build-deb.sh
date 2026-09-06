@@ -2,37 +2,40 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-1.0.0}"
 ARCH="${ARCH:-$(dpkg --print-architecture 2>/dev/null || echo amd64)}"
 TARGET_DEB_DIR="${ROOT_DIR}/target/deb"
 
 echo "=== Building debian packages for mop v${VERSION} (${ARCH}) ==="
 
 # 1. Build web frontend
-echo "--> Building web frontend..."
-cd "${ROOT_DIR}/web"
-if command -v pnpm >/dev/null 2>&1; then
-    pnpm install --frozen-lockfile || pnpm install
-    pnpm build
-else
-    echo "pnpm is required to build web frontend" >&2
-    exit 1
+if [ "${SKIP_WEB:-false}" != "true" ]; then
+    echo "--> Building web frontend..."
+    cd "${ROOT_DIR}/web"
+    if command -v pnpm >/dev/null 2>&1; then
+        pnpm install --frozen-lockfile || pnpm install
+        pnpm build
+    else
+        echo "pnpm is required to build web frontend" >&2
+        exit 1
+    fi
 fi
 
 # 2. Build Rust binaries in release mode
-echo "--> Building Rust binaries (release)..."
-cd "${ROOT_DIR}"
-cargo build --release \
-    -p mop-cli \
-    -p mop-plugin-manga \
-    -p mop-plugin-video \
-    -p mop-plugin-hello
-
-RELEASE_BIN="${ROOT_DIR}/target/release"
+RELEASE_BIN="${RELEASE_BIN:-${ROOT_DIR}/target/release}"
+if [ "${SKIP_BUILD:-false}" != "true" ]; then
+    echo "--> Building Rust binaries (release)..."
+    cd "${ROOT_DIR}"
+    cargo build --release \
+        -p mop-cli \
+        -p mop-plugin-manga \
+        -p mop-plugin-video \
+        -p mop-plugin-hello
+fi
 
 # Prepare target and staging directories
-rm -rf "${TARGET_DEB_DIR}"
 mkdir -p "${TARGET_DEB_DIR}"
+rm -f "${TARGET_DEB_DIR}"/*_"${ARCH}".deb
 
 STAGE_BASE="$(mktemp -d /tmp/mop-deb-stage.XXXXXX)"
 trap 'rm -rf "${STAGE_BASE}"' EXIT
